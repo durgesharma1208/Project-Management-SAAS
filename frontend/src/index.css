@@ -1,0 +1,158 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    @apply bg-surface-50 text-surface-900 font-sans text-sm;
+    line-height: 1.5;
+  }
+
+  :focus-visible {
+    @apply outline-none ring-2 ring-primary-500 ring-offset-2;
+  }
+
+  ::selection {
+    @apply bg-primary-100 text-primary-900;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-surface-300 rounded-full;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-surface-400;
+  }
+}
+
+@layer components {
+  /* Buttons */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 px-3.5 py-2 rounded-lg text-sm font-medium
+           transition-all duration-150 cursor-pointer select-none border border-transparent
+           disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2
+           focus-visible:ring-primary-500 focus-visible:ring-offset-2;
+  }
+  .btn-primary {
+    @apply btn bg-primary-600 text-white hover:bg-primary-700 active:bg-primary-800 shadow-subtle;
+  }
+  .btn-secondary {
+    @apply btn bg-surface-100 text-surface-700 border-surface-200 hover:bg-surface-200 active:bg-surface-300;
+  }
+  .btn-ghost {
+    @apply btn bg-transparent text-surface-600 hover:bg-surface-100 hover:text-surface-900;
+  }
+  .btn-danger {
+    @apply btn bg-red-600 text-white hover:bg-red-700 active:bg-red-800;
+  }
+  .btn-sm {
+    @apply px-2.5 py-1.5 text-xs rounded-md;
+  }
+  .btn-lg {
+    @apply px-5 py-2.5 text-base;
+  }
+
+  /* Inputs */
+  .input {
+    @apply w-full px-3 py-2 text-sm bg-white border border-surface-200 rounded-lg text-surface-900
+           placeholder:text-surface-400 transition-all duration-150
+           focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500
+           disabled:bg-surface-50 disabled:text-surface-400 disabled:cursor-not-allowed;
+  }
+  .input-error {
+    @apply border-red-400 focus:ring-red-500 focus:border-red-500;
+  }
+
+  /* Label */
+  .label {
+    @apply block text-xs font-medium text-surface-600 mb-1.5;
+  }
+
+  /* Card */
+  .card {
+    @apply bg-white rounded-xl border border-surface-200 shadow-card;
+  }
+
+  /* Badge */
+  .badge {
+    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium;
+  }
+
+  /* Sidebar nav item */
+  .nav-item {
+    @apply flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium text-surface-600
+           hover:bg-surface-100 hover:text-surface-900 transition-all duration-100 cursor-pointer;
+  }
+  .nav-item-active {
+    @apply bg-primary-50 text-primary-700 hover:bg-primary-50 hover:text-primary-700;
+  }
+
+  /* Dropdown */
+  .dropdown {
+    @apply absolute z-50 bg-white border border-surface-200 rounded-xl shadow-elevated
+           animate-scale-in overflow-hidden min-w-[180px];
+  }
+  .dropdown-item {
+    @apply flex items-center gap-2.5 w-full px-3.5 py-2.5 text-sm text-surface-700
+           hover:bg-surface-50 transition-colors cursor-pointer;
+  }
+
+  /* Dialog overlay */
+  .dialog-overlay {
+    @apply fixed inset-0 bg-black/40 backdrop-blur-sm z-40 animate-fade-in;
+  }
+  .dialog {
+    @apply fixed inset-0 flex items-center justify-center z-50 p-4;
+  }
+  .dialog-panel {
+    @apply bg-white rounded-2xl shadow-dialog w-full max-h-[90vh] overflow-y-auto animate-scale-in;
+  }
+
+  /* Priority badge colors */
+  .priority-urgent { @apply bg-red-50 text-red-700 border border-red-200; }
+  .priority-high    { @apply bg-orange-50 text-orange-700 border border-orange-200; }
+  .priority-medium  { @apply bg-yellow-50 text-yellow-700 border border-yellow-200; }
+  .priority-low     { @apply bg-blue-50 text-blue-700 border border-blue-200; }
+  .priority-none    { @apply bg-surface-100 text-surface-500 border border-surface-200; }
+
+  /* Status badge colors */
+  .status-backlog     { @apply bg-surface-100 text-surface-600; }
+  .status-todo        { @apply bg-blue-50 text-blue-700; }
+  .status-in_progress { @apply bg-amber-50 text-amber-700; }
+  .status-in_review   { @apply bg-purple-50 text-purple-700; }
+  .status-done        { @apply bg-green-50 text-green-700; }
+}
+
+@layer utilities {
+  .truncate-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+}
