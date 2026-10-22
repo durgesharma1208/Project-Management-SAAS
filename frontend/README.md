@@ -7,6 +7,7 @@ npm install
 npm run dev     # http://localhost:5173 (proxies /api → http://localhost:5000)
 npm run build   # production bundle in dist/
 npm run lint    # eslint (react-hooks rules enabled)
+npm run test:render   # jsdom render + interaction smoke test (mocked API)
 ```
 
 See the [root README](../README.md) for full setup instructions, the API surface

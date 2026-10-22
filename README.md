@@ -213,16 +213,22 @@ List responses are paginated:
 ## Testing
 
 ```bash
-cd backend && npm test        # CPM scheduler + task-query builder (10 tests)
-cd backend && npm run check   # syntax check the server entry point
-cd frontend && npm run lint
-cd frontend && npm run build
+cd backend  && npm test        # CPM scheduler + task-query builder (10 tests)
+cd backend  && npm run check   # syntax check the server entry point
+cd frontend && npm run lint    # eslint incl. react-hooks rules
+cd frontend && npm run build   # production bundle
+cd frontend && npm run test:render
 ```
 
-There is no integration test suite against a live database in this repository;
-the API is exercised end-to-end manually (see the smoke-test commands in the
-project history) and the frontend pages are rendered against mocked API
-responses during development.
+`npm run test:render` mounts every screen in jsdom against a mocked API
+(`frontend/scripts/render-smoke`) and asserts that all 19 pages render with data
+and no console errors, then exercises six interactions: open/close the task
+drawer, the create-task dialog, the create-project dialog, the board's inline
+composer and the ⌘K palette.
+
+There is no integration test suite against a live database: the API contract is
+covered by the unit tests and an HTTP smoke check (health, 404, 401, 422, CORS),
+and database-backed flows are verified manually once MongoDB is running.
 
 ---
 

@@ -112,6 +112,128 @@ const renderCase = async (name, path, element) => {
   }
 };
 
+
+// ── Interaction checks ────────────────────────────────────────────────────────
+// Render a page, perform DOM clicks and assert on what the user would see.
+const mountPage = async (path, element) => {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const errors = [];
+  const original = console.error;
+  console.error = (...args) => { errors.push(args.map(String).join(' ')); };
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  const root = createRoot(container);
+  root.render(
+    <QueryClientProvider client={queryClient}>
+      <ToastProvider>
+        <AuthProvider>
+          <WorkspaceProvider>
+            <MemoryRouter initialEntries={[path]}>
+              <Routes>
+                <Route path="/tasks/list" element={element} />
+                <Route path="/projects" element={element} />
+                <Route path="/dashboard" element={element} />
+                <Route path="/projects/:projectId/board" element={element} />
+                <Route path="*" element={element} />
+              </Routes>
+            </MemoryRouter>
+          </WorkspaceProvider>
+        </AuthProvider>
+      </ToastProvider>
+    </QueryClientProvider>,
+  );
+  await flush(140);
+  return {
+    container,
+    text: () => document.body.textContent || '',
+    findButton: (label) => Array.from(document.querySelectorAll('button')).find((b) => (b.textContent || '').trim().includes(label)),
+    click: async (el) => {
+      if (!el) return false;
+      el.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+      await flush(140);
+      return true;
+    },
+    unmount: () => { console.error = original; root.unmount(); container.remove(); },
+    errors,
+  };
+};
+
+const runInteractions = async () => {
+  const checks = [];
+
+  // 1. List view → click a task row → task panel opens with editing affordances
+  {
+    const view = await mountPage('/tasks/list', <ListViewPage />);
+    // The task title is the innermost button of the row.
+    const row = Array.from(document.querySelectorAll('button')).find((el) => (el.textContent || '').includes('Design the navigation shell'));
+    await view.click(row);
+    const opened = view.text().includes('Subtasks') && view.text().includes('Comments') && view.text().includes('Activity');
+    // 2. Close panel, open the create-task dialog
+    await view.click(document.querySelector('[aria-label="Close task panel"]'));
+    const closed = !document.querySelector('[aria-label^="Task:"]');
+    await view.click(view.findButton('New task'));
+    const dialogOpen = view.text().includes('New task') && Boolean(document.querySelector('#task-title, input[id*="title"]'));
+    view.unmount();
+    checks.push(['list: open task panel', opened]);
+    checks.push(['list: close task panel', closed]);
+    checks.push(['list: create-task dialog', dialogOpen]);
+  }
+
+  // 3. Projects → create-project dialog
+  {
+    const view = await mountPage('/projects', <ProjectsPage />);
+    await view.click(view.findButton('New project'));
+    const dialogOpen = Boolean(document.querySelector('input[id*="project-name"], #project-name'));
+    view.unmount();
+    checks.push(['projects: create-project dialog', dialogOpen]);
+  }
+
+  // 4. Board → inline composer appears in a column
+  {
+    const view = await mountPage('/projects/p1/board', <KanbanBoardPage />);
+    const addButtons = Array.from(document.querySelectorAll('button')).filter((b) => (b.textContent || '').includes('Add task'));
+    await view.click(addButtons[0]);
+    const composer = Boolean(document.querySelector('textarea[aria-label="New task title"]'));
+    view.unmount();
+    checks.push(['board: inline task composer', composer]);
+  }
+
+  // 5. Command palette opens with ⌘K / Ctrl+K (inside the real app shell)
+  {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    root.render(
+      <QueryClientProvider client={queryClient}>
+        <ToastProvider>
+          <AuthProvider>
+            <WorkspaceProvider>
+              <MemoryRouter initialEntries={['/dashboard']}>
+                <Routes>
+                  <Route element={<AppLayout />}>
+                    <Route path="/dashboard" element={<DashboardPage />} />
+                    <Route path="*" element={<DashboardPage />} />
+                  </Route>
+                </Routes>
+              </MemoryRouter>
+            </WorkspaceProvider>
+          </AuthProvider>
+        </ToastProvider>
+      </QueryClientProvider>,
+    );
+    await flush(160);
+    document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }));
+    await flush(140);
+    const palette = Boolean(document.querySelector('[aria-label="Search TaskFlow"]'));
+    root.unmount();
+    container.remove();
+    checks.push(['shell: command palette (Ctrl+K)', palette]);
+  }
+
+  return checks;
+};
+
 const main = async () => {
   localStorage.setItem('accessToken', 'test-token');
   localStorage.setItem('activeWorkspaceId', 'w1');
@@ -162,7 +284,12 @@ const main = async () => {
   shellErrors.slice(0, 5).forEach((e) => console.log('        ! ' + e.split('\n')[0].slice(0, 220)));
 
   console.log(`\n${results.length - failed.length}/${results.length} page renders without console errors`);
-  process.exitCode = failed.length || shellErrors.length ? 1 : 0;
+
+  const checks = await runInteractions();
+  checks.forEach(([name, ok]) => console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}`));
+  const failedChecks = checks.filter(([, ok]) => !ok).length;
+  console.log(`${checks.length - failedChecks}/${checks.length} interaction checks passed`);
+  process.exitCode = failed.length || shellErrors.length || failedChecks ? 1 : 0;
   setTimeout(() => process.exit(process.exitCode), 50);
 };
 
