@@ -1,7 +1,7 @@
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useState } from 'react';
 import { Eye, EyeOff, Zap } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
@@ -17,6 +17,12 @@ const schema = z.object({
 export const LoginPage = () => {
   const { login } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  // Deep links (e.g. an invitation) survive the sign-in / sign-up detour.
+  const redirectTo = searchParams.get('redirect');
+  const destination = redirectTo && redirectTo.startsWith('/') && !redirectTo.startsWith('//')
+    ? redirectTo
+    : '/dashboard';
   const [showPassword, setShowPassword] = useState(false);
   const [apiError, setApiError] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -28,7 +34,7 @@ export const LoginPage = () => {
     setLoading(true);
     try {
       await login(data);
-      navigate('/dashboard');
+      navigate(destination, { replace: true });
     } catch (e) {
       setApiError(extractError(e));
     } finally {
@@ -96,7 +102,7 @@ export const LoginPage = () => {
 
           <p className="text-center text-sm text-surface-500 mt-5">
             Don&apos;t have an account?{' '}
-            <Link to="/register" className="text-primary-600 font-medium hover:underline">Sign up</Link>
+            <Link to={redirectTo ? `/register?redirect=${encodeURIComponent(redirectTo)}` : '/register'} className="text-primary-600 font-medium hover:underline">Sign up</Link>
           </p>
         </div>
       </div>

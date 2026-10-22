@@ -8,6 +8,7 @@ const updateProfileSchema = z.object({
   bio: z.string().max(500).optional(),
   jobTitle: z.string().max(100).optional(),
   timezone: z.string().optional(),
+  avatar: z.string().max(500).url('Avatar must be a valid URL').optional().nullable(),
 });
 
 const changePasswordSchema = z.object({
@@ -22,7 +23,9 @@ export const getProfile = async (req, res) => {
 export const updateProfile = async (req, res, next) => {
   try {
     const updates = updateProfileSchema.parse(req.body);
-    const user = await User.findByIdAndUpdate(req.userId, updates, { new: true, runValidators: true });
+    const user = await User.findByIdAndUpdate(req.userId, updates, { new: true, runValidators: true })
+      .select('-password -refreshTokens');
+    if (!user) throw createError('User not found', 404);
     res.json({ success: true, data: { user } });
   } catch (err) {
     next(err);
@@ -39,6 +42,7 @@ export const changePassword = async (req, res, next) => {
     if (!valid) throw createError('Current password is incorrect', 400);
 
     user.password = newPassword;
+    user.refreshTokens = [];
     await user.save();
     res.json({ success: true, message: 'Password changed successfully' });
   } catch (err) {

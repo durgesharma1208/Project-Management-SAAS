@@ -30,6 +30,9 @@ try {
 
 const app = express();
 
+// Trust the first proxy (needed for correct rate-limit/IP handling behind nginx)
+app.set('trust proxy', 1);
+
 // ── Metrics Middleware ─────────────────────────────────────────────────────────
 app.use(metricsMiddleware);
 
@@ -46,8 +49,27 @@ const limiter = rateLimit({
 app.use(limiter);
 
 // ── CORS ───────────────────────────────────────────────────────────────────────
+// Allowed origins come from CLIENT_URL (comma separated). In development we also
+// allow localhost on any port and the sandbox preview host so the UI can be tried
+// out without editing configuration. Production stays on the explicit allow-list.
+const explicitOrigins = (process.env.CLIENT_URL || 'http://localhost:5173')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+
+const isAllowedOrigin = (origin) => {
+  if (!origin) return true; // same-origin / server-to-server / curl
+  if (explicitOrigins.includes(origin)) return true;
+  if (process.env.NODE_ENV === 'production') return false;
+  return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)
+    || /^https:\/\/[a-z0-9-]+\.e2b\.app$/.test(origin);
+};
+
 app.use(cors({
-  origin: process.env.CLIENT_URL || 'http://localhost:5173',
+  origin: (origin, callback) => {
+    if (isAllowedOrigin(origin)) return callback(null, true);
+    return callback(new Error('Not allowed by CORS'));
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
 }));

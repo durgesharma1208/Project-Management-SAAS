@@ -1,317 +1,254 @@
-/**
- * Feature 6 — List View Page
- * Full-featured task table with search, multi-filter, sort, pagination, bulk actions, saved filters.
- */
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  Search, Filter, ChevronDown, ChevronUp, X, Check, Plus, Save, Trash2,
-  ArrowUpDown, RefreshCw, Square, CheckSquare, MoreHorizontal, Calendar,
-  Flag, User, Tag, ListFilter, Bookmark, AlertCircle,
+  ArrowDown, ArrowUp, Bookmark, CheckSquare2, ChevronLeft, ChevronRight, Filter,
+  ListFilter, Plus, Search, SlidersHorizontal, Square, Trash2, X,
 } from 'lucide-react';
-import { format, isPast, isToday } from 'date-fns';
 import { useWorkspace } from '../../contexts/WorkspaceContext';
-import { useAuth } from '../../contexts/AuthContext';
-import api from '../../lib/api';
-import { tasksApi, savedFiltersApi, taskKeys, savedFilterKeys } from '../../lib/taskApi';
-import { PriorityBadge, StatusBadge, LabelBadge } from '../../components/ui/Badge';
+import { useMembers } from '../../hooks/useMembers';
+import { useToast } from '../../components/ui/Toast';
 import { Avatar } from '../../components/ui/Avatar';
+import { LabelBadge, PriorityBadge, StatusBadge } from '../../components/ui/Badge';
+import { EmptyState, ErrorState, PageSkeleton } from '../../components/ui/Primitives';
+import { PageHeader } from '../../components/ui/Primitives';
 import { Dialog } from '../../components/ui/Dialog';
-import { Alert, extractError } from '../../components/ui/Alert';
-import { PageLoader } from '../../components/ui/Spinner';
+import { FormField, Input } from '../../components/ui/Form';
+import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
+import { TaskFormDialog } from '../../components/tasks/TaskFormDialog';
+import { TaskPanel } from '../../components/tasks/TaskPanel';
+import {
+  tasksApi, savedFiltersApi, taskKeys, savedFilterKeys, dashboardKeys, projectKeys,
+} from '../../lib/taskApi';
+import { TASK_PRIORITIES, TASK_STATUSES } from '../../lib/constants';
+import { dueLabel, isOverdue } from '../../lib/format';
+import { extractError } from '../../components/ui/Alert';
 
-const TASK_STATUSES = ['backlog', 'todo', 'in_progress', 'in_review', 'done'];
-const TASK_PRIORITIES = ['none', 'low', 'medium', 'high', 'urgent'];
-const SORT_FIELDS = [
-  { value: 'createdAt', label: 'Created' },
-  { value: 'updatedAt', label: 'Updated' },
-  { value: 'dueDate', label: 'Due Date' },
-  { value: 'title', label: 'Title' },
+const PAGE_SIZES = [10, 25, 50, 100];
+const SORT_OPTIONS = [
+  { value: 'manual', label: 'Board order' },
+  { value: 'updatedAt', label: 'Recently updated' },
+  { value: 'createdAt', label: 'Newest first' },
+  { value: 'dueDate', label: 'Due date' },
   { value: 'priority', label: 'Priority' },
   { value: 'status', label: 'Status' },
+  { value: 'title', label: 'Title' },
 ];
-const PAGE_SIZES = [10, 25, 50, 100];
 
-// ── Debounce hook ──────────────────────────────────────────────────────────────
-function useDebounce(value, delay = 350) {
-  const [debouncedValue, setDebouncedValue] = useState(value);
+const useDebounced = (value, delay = 350) => {
+  const [debounced, setDebounced] = useState(value);
   useEffect(() => {
-    const timer = setTimeout(() => setDebouncedValue(value), delay);
+    const timer = setTimeout(() => setDebounced(value), delay);
     return () => clearTimeout(timer);
   }, [value, delay]);
-  return debouncedValue;
-}
+  return debounced;
+};
 
-// ── Confirm dialog ─────────────────────────────────────────────────────────────
-const ConfirmDialog = ({ isOpen, onClose, onConfirm, title, message, confirmLabel = 'Confirm', danger }) => (
-  <Dialog isOpen={isOpen} onClose={onClose} title={title} size="sm"
-    footer={
-      <>
-        <button className="btn-secondary btn-sm" onClick={onClose}>Cancel</button>
-        <button className={`btn-sm ${danger ? 'btn-danger' : 'btn-primary'}`} onClick={onConfirm}>
-          {confirmLabel}
-        </button>
-      </>
-    }>
-    <p className="text-sm text-surface-600">{message}</p>
-  </Dialog>
-);
-
-// ── Save Filter Dialog ─────────────────────────────────────────────────────────
-const SaveFilterDialog = ({ isOpen, onClose, onSave, currentFilters, currentSort }) => {
+const SaveViewDialog = ({ isOpen, onClose, onSave, isSaving }) => {
   const [name, setName] = useState('');
   const [error, setError] = useState('');
-  const handleSave = () => {
-    if (!name.trim()) { setError('Name is required'); return; }
-    onSave({ name: name.trim(), filters: currentFilters, sortField: currentSort.field, sortDir: currentSort.dir });
-    setName('');
-    onClose();
+
+  useEffect(() => { if (isOpen) { setName(''); setError(''); } }, [isOpen]);
+
+  const submit = () => {
+    if (!name.trim()) { setError('Give this view a name'); return; }
+    onSave(name.trim());
   };
+
   return (
-    <Dialog isOpen={isOpen} onClose={onClose} title="Save Current View" size="sm"
-      footer={<><button className="btn-secondary btn-sm" onClick={onClose}>Cancel</button><button className="btn-primary btn-sm" onClick={handleSave}>Save</button></>}>
-      <div className="space-y-3">
-        {error && <p className="text-xs text-red-600">{error}</p>}
-        <input
+    <Dialog
+      isOpen={isOpen}
+      onClose={onClose}
+      title="Save current view"
+      description="Saved views keep your filters and sorting for one click later."
+      size="sm"
+      footer={
+        <>
+          <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
+          <button type="button" className="btn-primary" onClick={submit} disabled={isSaving}>Save view</button>
+        </>
+      }
+    >
+      <FormField label="View name" error={error} required id="view-name">
+        <Input
+          id="view-name"
           value={name}
-          onChange={(e) => { setName(e.target.value); setError(''); }}
-          placeholder="e.g., My Open Tasks"
-          className="input"
+          onChange={(event) => { setName(event.target.value); setError(''); }}
+          onKeyDown={(event) => { if (event.key === 'Enter') submit(); }}
+          placeholder="e.g. High priority bugs"
           autoFocus
-          onKeyDown={(e) => e.key === 'Enter' && handleSave()}
         />
-      </div>
+      </FormField>
     </Dialog>
   );
 };
 
-// ── Bulk Action Bar ────────────────────────────────────────────────────────────
-const BulkActionBar = ({ selectedIds, onClear, onAction, members, projects }) => {
-  const [open, setOpen] = useState(false);
-  const count = selectedIds.length;
-  if (count === 0) return null;
-
-  const actions = [
-    { label: 'Set Status', sub: TASK_STATUSES.map((s) => ({ label: s.replace('_', ' '), action: () => onAction('set_status', s) })) },
-    { label: 'Set Priority', sub: TASK_PRIORITIES.map((p) => ({ label: p, action: () => onAction('set_priority', p) })) },
-    { label: 'Delete Selected', action: () => onAction('delete', null), danger: true },
-  ];
-
-  return (
-    <div className="flex items-center gap-3 bg-primary-50 border border-primary-200 rounded-xl px-4 py-2.5 animate-slide-up">
-      <CheckSquare size={15} className="text-primary-600" />
-      <span className="text-sm font-medium text-primary-700">{count} selected</span>
-      <div className="flex-1" />
-      {actions.map((a) => (
-        <div key={a.label} className="relative">
-          {a.sub ? (
-            <>
-              <button className="btn-ghost btn-sm flex items-center gap-1" onClick={() => setOpen(open === a.label ? false : a.label)}>
-                {a.label} <ChevronDown size={12} />
-              </button>
-              {open === a.label && (
-                <div className="dropdown absolute bottom-full mb-1 left-0 min-w-[140px]">
-                  {a.sub.map((s) => (
-                    <button key={s.label} className="dropdown-item capitalize text-xs" onClick={() => { s.action(); setOpen(false); }}>
-                      {s.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </>
-          ) : (
-            <button className={`btn-sm ${a.danger ? 'btn-danger' : 'btn-ghost'}`} onClick={a.action}>
-              {a.label}
-            </button>
-          )}
-        </div>
-      ))}
-      <button className="btn-ghost btn-sm" onClick={onClear}><X size={14} /></button>
-    </div>
-  );
-};
-
-// ── Main Page ──────────────────────────────────────────────────────────────────
 export const ListViewPage = () => {
   const { activeWorkspaceId } = useWorkspace();
-  const { user } = useAuth();
-  const qc = useQueryClient();
+  const { users } = useMembers();
+  const queryClient = useQueryClient();
+  const toast = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  // Filters from URL params
   const [search, setSearch] = useState(searchParams.get('search') || '');
-  const [statusFilters, setStatusFilters] = useState(searchParams.getAll('status'));
-  const [priorityFilters, setPriorityFilters] = useState(searchParams.getAll('priority'));
-  const [overdueOnly, setOverdueOnly] = useState(searchParams.get('overdue') === 'true');
-  const [sortField, setSortField] = useState(searchParams.get('sort') || 'createdAt');
-  const [sortDir, setSortDir] = useState(searchParams.get('dir') || 'desc');
+  const debouncedSearch = useDebounced(search);
+  const [statuses, setStatuses] = useState([]);
+  const [priorities, setPriorities] = useState([]);
+  const [assignee, setAssignee] = useState('');
+  const [overdueOnly, setOverdueOnly] = useState(false);
+  const [sort, setSort] = useState('manual');
+  const [dir, setDir] = useState('asc');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [saveViewOpen, setSaveViewOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(searchParams.get('new') === '1');
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
 
-  // Selection
-  const [selectedIds, setSelectedIds] = useState(new Set());
-
-  // UI state
-  const [filterPanelOpen, setFilterPanelOpen] = useState(false);
-  const [saveDialogOpen, setSaveDialogOpen] = useState(false);
-  const [confirmBulk, setConfirmBulk] = useState(null);
-  const [bulkError, setBulkError] = useState('');
-
-  const debouncedSearch = useDebounce(search, 400);
-
-  // Sync URL params
-  useEffect(() => {
-    const params = {};
-    if (debouncedSearch) params.search = debouncedSearch;
-    if (statusFilters.length) params.status = statusFilters;
-    if (priorityFilters.length) params.priority = priorityFilters;
-    if (overdueOnly) params.overdue = 'true';
-    if (sortField !== 'createdAt') params.sort = sortField;
-    if (sortDir !== 'desc') params.dir = sortDir;
-    setSearchParams(params, { replace: true });
-    setPage(1);
-  }, [debouncedSearch, statusFilters, priorityFilters, overdueOnly, sortField, sortDir]);
-
-  const queryParams = {
-    search: debouncedSearch || undefined,
-    status: statusFilters.length === 1 ? statusFilters[0] : undefined,
-    priority: priorityFilters.length === 1 ? priorityFilters[0] : undefined,
-    overdue: overdueOnly ? 'true' : undefined,
-    sort: sortField,
-    dir: sortDir,
-    page,
-    limit: pageSize,
+  const openTaskId = searchParams.get('task') || null;
+  const setOpenTaskId = (id) => {
+    const next = new URLSearchParams(searchParams);
+    if (id) next.set('task', id);
+    else next.delete('task');
+    setSearchParams(next, { replace: true });
   };
 
-  const { data, isLoading, isFetching, refetch } = useQuery({
-    queryKey: taskKeys.list(activeWorkspaceId, queryParams),
-    queryFn: () => tasksApi.list(activeWorkspaceId, queryParams),
-    enabled: !!activeWorkspaceId,
-    keepPreviousData: true,
+  const params = useMemo(() => ({
+    search: debouncedSearch || undefined,
+    status: statuses.length ? statuses.join(',') : undefined,
+    priority: priorities.length ? priorities.join(',') : undefined,
+    assignee: assignee || undefined,
+    overdue: overdueOnly ? 'true' : undefined,
+    sort,
+    dir,
+    page,
+    limit: pageSize,
+  }), [debouncedSearch, statuses, priorities, assignee, overdueOnly, sort, dir, page, pageSize]);
+
+  const { data, isLoading, isFetching, isError, refetch } = useQuery({
+    queryKey: taskKeys.list(activeWorkspaceId, params),
+    queryFn: () => tasksApi.list(activeWorkspaceId, params),
+    enabled: Boolean(activeWorkspaceId),
   });
 
   const tasks = data?.tasks || [];
   const total = data?.total || 0;
-  const totalPages = Math.ceil(total / pageSize);
+  const totalPages = data?.totalPages || 1;
 
-  // Saved filters
-  const { data: savedFilters } = useQuery({
+  const { data: savedViews = [] } = useQuery({
     queryKey: savedFilterKeys.all(activeWorkspaceId, null),
     queryFn: () => savedFiltersApi.list(activeWorkspaceId, null),
-    enabled: !!activeWorkspaceId,
+    enabled: Boolean(activeWorkspaceId),
   });
 
-  const saveFilterMutation = useMutation({
-    mutationFn: (payload) => savedFiltersApi.create(activeWorkspaceId, payload),
-    onSuccess: () => qc.invalidateQueries({ queryKey: savedFilterKeys.all(activeWorkspaceId, null) }),
+  const saveViewMutation = useMutation({
+    mutationFn: (name) => savedFiltersApi.create(activeWorkspaceId, {
+      name,
+      filters: {
+        search: debouncedSearch || undefined,
+        status: statuses.length ? statuses : undefined,
+        priority: priorities.length ? priorities : undefined,
+        assignee: assignee ? [assignee] : undefined,
+        overdue: overdueOnly || undefined,
+      },
+      sortField: sort === 'manual' ? 'createdAt' : sort,
+      sortDir: dir,
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: savedFilterKeys.all(activeWorkspaceId, null) });
+      toast.success('View saved');
+      setSaveViewOpen(false);
+    },
+    onError: (error) => toast.error(extractError(error)),
   });
 
-  const deleteFilterMutation = useMutation({
-    mutationFn: (id) => savedFiltersApi.delete(activeWorkspaceId, id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: savedFilterKeys.all(activeWorkspaceId, null) }),
+  const deleteViewMutation = useMutation({
+    mutationFn: (id) => savedFiltersApi.remove(activeWorkspaceId, id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: savedFilterKeys.all(activeWorkspaceId, null) });
+      toast.success('Saved view removed');
+    },
+    onError: (error) => toast.error(extractError(error)),
   });
 
   const bulkMutation = useMutation({
-    mutationFn: (payload) => tasksApi.bulk(activeWorkspaceId, payload),
-    onSuccess: (res) => {
-      qc.invalidateQueries({ queryKey: taskKeys.all(activeWorkspaceId) });
-      setSelectedIds(new Set());
-      if (res.data?.failed?.length > 0) {
-        setBulkError(`${res.data.failed.length} task(s) failed: ${res.data.failed.map((f) => f.error).join(', ')}`);
-      }
+    mutationFn: ({ action, value }) => tasksApi.bulk(activeWorkspaceId, {
+      taskIds: selectedIds,
+      action,
+      value,
+    }),
+    onSuccess: (result) => {
+      const failed = result?.data?.failed || [];
+      if (failed.length) toast.error(`${failed.length} task(s) could not be updated: ${failed[0].error}`);
+      else toast.success(`${selectedIds.length} task(s) updated`);
+      setSelectedIds([]);
+      queryClient.invalidateQueries({ queryKey: taskKeys.all(activeWorkspaceId) });
+      queryClient.invalidateQueries({ queryKey: dashboardKeys.workspace(activeWorkspaceId) });
+      queryClient.invalidateQueries({ queryKey: projectKeys.all(activeWorkspaceId) });
     },
-    onError: (e) => setBulkError(extractError(e)),
+    onError: (error) => toast.error(extractError(error)),
   });
 
-  // Handlers
-  const toggleSelect = (id) => setSelectedIds((prev) => {
-    const next = new Set(prev);
-    next.has(id) ? next.delete(id) : next.add(id);
-    return next;
-  });
+  const activeFilterCount = statuses.length + priorities.length + (assignee ? 1 : 0) + (overdueOnly ? 1 : 0);
 
-  const toggleSelectAll = () => {
-    if (selectedIds.size === tasks.length) setSelectedIds(new Set());
-    else setSelectedIds(new Set(tasks.map((t) => t._id)));
-  };
-
-  const handleSort = (field) => {
-    if (sortField === field) setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
-    else { setSortField(field); setSortDir('asc'); }
-  };
-
-  const clearFilters = () => {
-    setSearch('');
-    setStatusFilters([]);
-    setPriorityFilters([]);
+  const resetFilters = () => {
+    setStatuses([]);
+    setPriorities([]);
+    setAssignee('');
     setOverdueOnly(false);
-    setSortField('createdAt');
-    setSortDir('desc');
+    setPage(1);
   };
 
-  const hasActiveFilters = search || statusFilters.length || priorityFilters.length || overdueOnly;
-
-  const applyBulkAction = (action, value) => {
-    if (action === 'delete') {
-      setConfirmBulk({ action, value });
-      return;
-    }
-    setBulkError('');
-    bulkMutation.mutate({ taskIds: [...selectedIds], action, value });
+  const applySavedView = (view) => {
+    setSearch(view.filters?.search || '');
+    setStatuses(view.filters?.status || []);
+    setPriorities(view.filters?.priority || []);
+    setAssignee(view.filters?.assignee?.[0] || '');
+    setOverdueOnly(Boolean(view.filters?.overdue));
+    setSort(view.sortField === 'createdAt' ? 'createdAt' : view.sortField || 'manual');
+    setDir(view.sortDir || 'desc');
+    setPage(1);
   };
 
-  const applySavedFilter = (sf) => {
-    setSearch(sf.filters?.search || '');
-    setStatusFilters(sf.filters?.status || []);
-    setPriorityFilters(sf.filters?.priority || []);
-    setOverdueOnly(sf.filters?.overdue || false);
-    setSortField(sf.sortField || 'createdAt');
-    setSortDir(sf.sortDir || 'desc');
+  const toggleInArray = (list, setList, value) => {
+    setList(list.includes(value) ? list.filter((item) => item !== value) : [...list, value]);
+    setPage(1);
   };
 
-  const SortIcon = ({ field }) => {
-    if (sortField !== field) return <ArrowUpDown size={12} className="text-surface-400 ml-1" />;
-    return sortDir === 'asc' ? <ChevronUp size={12} className="text-primary-600 ml-1" /> : <ChevronDown size={12} className="text-primary-600 ml-1" />;
-  };
+  const allSelected = tasks.length > 0 && selectedIds.length === tasks.length;
 
   return (
-    <div className="p-6 max-w-7xl mx-auto space-y-4">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-surface-900">List View</h1>
-          <p className="text-sm text-surface-500 mt-0.5">
-            {total > 0 ? `${total} task${total === 1 ? '' : 's'}` : 'No tasks'}
-            {isFetching && !isLoading && <span className="ml-2 text-primary-500">Refreshing…</span>}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            className="btn-secondary btn-sm flex items-center gap-1.5"
-            onClick={() => setSaveDialogOpen(true)}
-            title="Save current view"
-          >
-            <Bookmark size={13} /> Save View
-          </button>
-          <button className="btn-primary btn-sm flex items-center gap-1.5">
-            <Plus size={13} /> New Task
-          </button>
-        </div>
-      </div>
+    <div className="page">
+      <PageHeader
+        title="All Tasks"
+        description={`${total} ${total === 1 ? 'task' : 'tasks'} in this workspace${isFetching && !isLoading ? ' · refreshing…' : ''}`}
+        actions={
+          <>
+            <button type="button" className="btn-secondary" onClick={() => setSaveViewOpen(true)} disabled={!activeWorkspaceId}>
+              <Bookmark size={14} /> Save view
+            </button>
+            <button type="button" className="btn-primary" onClick={() => setCreateOpen(true)}>
+              <Plus size={14} /> New task
+            </button>
+          </>
+        }
+      />
 
-      {/* Saved Filters */}
-      {savedFilters?.length > 0 && (
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-xs text-surface-400 font-medium">Saved:</span>
-          {savedFilters.map((sf) => (
-            <div key={sf._id} className="group flex items-center gap-1 bg-white border border-surface-200 rounded-full px-3 py-1">
-              <button className="text-xs text-surface-700 hover:text-primary-600" onClick={() => applySavedFilter(sf)}>
-                {sf.name}
+      {/* Saved views */}
+      {savedViews.length > 0 && (
+        <div className="flex items-center gap-1.5 flex-wrap mb-3">
+          <span className="text-2xs font-semibold uppercase tracking-wider text-surface-400 mr-1">Saved views</span>
+          {savedViews.map((view) => (
+            <div key={view._id} className="group inline-flex items-center bg-white border border-surface-200 rounded-full pl-2.5 pr-1 py-0.5">
+              <button type="button" className="text-xs text-surface-600 hover:text-primary-700" onClick={() => applySavedView(view)}>
+                {view.name}
               </button>
               <button
-                className="opacity-0 group-hover:opacity-100 text-surface-400 hover:text-red-500"
-                onClick={() => deleteFilterMutation.mutate(sf._id)}
+                type="button"
+                onClick={() => deleteViewMutation.mutate(view._id)}
+                className="ml-1 p-0.5 rounded-full text-surface-300 hover:text-red-500 hover:bg-red-50"
+                aria-label={`Delete saved view ${view.name}`}
               >
                 <X size={11} />
               </button>
@@ -320,206 +257,312 @@ export const ListViewPage = () => {
         </div>
       )}
 
-      {/* Search + Filter Bar */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <div className="flex items-center gap-2 bg-white border border-surface-200 rounded-lg px-3 py-2 flex-1 min-w-[200px] max-w-sm">
-          <Search size={14} className="text-surface-400 flex-shrink-0" />
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search tasks…"
-            className="bg-transparent outline-none text-sm text-surface-700 placeholder:text-surface-400 w-full"
-          />
-          {search && <button onClick={() => setSearch('')}><X size={13} className="text-surface-400" /></button>}
+      {/* Toolbar */}
+      <div className="card p-2.5 mb-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative flex-1 min-w-[180px] max-w-sm">
+            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-surface-400" />
+            <input
+              value={search}
+              onChange={(event) => { setSearch(event.target.value); setPage(1); }}
+              placeholder="Search tasks by title, description or label…"
+              className="input pl-8"
+              aria-label="Search tasks"
+            />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-surface-400 hover:text-surface-700"
+                aria-label="Clear search"
+              >
+                <X size={13} />
+              </button>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setFiltersOpen((value) => !value)}
+            aria-expanded={filtersOpen}
+            className={activeFilterCount ? 'btn-secondary border-primary-300 text-primary-700' : 'btn-secondary'}
+          >
+            <Filter size={14} /> Filters
+            {activeFilterCount > 0 && (
+              <span className="badge bg-primary-600 text-white">{activeFilterCount}</span>
+            )}
+          </button>
+
+          <div className="flex items-center gap-1">
+            <SlidersHorizontal size={13} className="text-surface-400" />
+            <select
+              value={sort}
+              onChange={(event) => { setSort(event.target.value); setPage(1); }}
+              className="input input-sm w-auto"
+              aria-label="Sort tasks"
+            >
+              {SORT_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() => setDir(dir === 'asc' ? 'desc' : 'asc')}
+              className="btn-icon border border-surface-200"
+              aria-label={dir === 'asc' ? 'Sort ascending' : 'Sort descending'}
+            >
+              {dir === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />}
+            </button>
+          </div>
+
+          {(activeFilterCount > 0 || search) && (
+            <button type="button" className="btn-ghost btn-sm" onClick={() => { resetFilters(); setSearch(''); }}>
+              <X size={12} /> Clear all
+            </button>
+          )}
         </div>
 
-        <button
-          onClick={() => setFilterPanelOpen(!filterPanelOpen)}
-          className={`btn-sm flex items-center gap-1.5 ${hasActiveFilters ? 'btn-primary' : 'btn-secondary'}`}
-        >
-          <Filter size={13} />
-          Filters
-          {hasActiveFilters && (
-            <span className="bg-white text-primary-700 text-[10px] font-bold rounded-full px-1.5">
-              {[statusFilters.length, priorityFilters.length, overdueOnly ? 1 : 0].reduce((a, b) => a + b, 0)}
-            </span>
-          )}
-        </button>
-
-        {/* Sort selector */}
-        <select
-          value={`${sortField}_${sortDir}`}
-          onChange={(e) => {
-            const [f, d] = e.target.value.split('_');
-            setSortField(f);
-            setSortDir(d);
-          }}
-          className="input w-auto text-xs"
-        >
-          {SORT_FIELDS.flatMap((f) => [
-            <option key={`${f.value}_desc`} value={`${f.value}_desc`}>{f.label} ↓</option>,
-            <option key={`${f.value}_asc`} value={`${f.value}_asc`}>{f.label} ↑</option>,
-          ])}
-        </select>
-
-        {hasActiveFilters && (
-          <button className="btn-ghost btn-sm text-surface-500 hover:text-red-600" onClick={clearFilters}>
-            <X size={13} /> Clear filters
-          </button>
+        {filtersOpen && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-3 pt-3 border-t border-surface-100 animate-fade-in">
+            <div>
+              <p className="label">Status</p>
+              <div className="space-y-1">
+                {TASK_STATUSES.map((status) => (
+                  <label key={status.id} className="flex items-center gap-2 cursor-pointer text-xs text-surface-600">
+                    <input
+                      type="checkbox"
+                      checked={statuses.includes(status.id)}
+                      onChange={() => toggleInArray(statuses, setStatuses, status.id)}
+                    />
+                    <StatusBadge status={status.id} />
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div>
+              <p className="label">Priority</p>
+              <div className="space-y-1">
+                {TASK_PRIORITIES.map((option) => (
+                  <label key={option.id} className="flex items-center gap-2 cursor-pointer text-xs text-surface-600">
+                    <input
+                      type="checkbox"
+                      checked={priorities.includes(option.id)}
+                      onChange={() => toggleInArray(priorities, setPriorities, option.id)}
+                    />
+                    <PriorityBadge priority={option.id} />
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div>
+              <p className="label">Assignee</p>
+              <select
+                value={assignee}
+                onChange={(event) => { setAssignee(event.target.value); setPage(1); }}
+                className="input"
+                aria-label="Filter by assignee"
+              >
+                <option value="">Anyone</option>
+                <option value="me">Assigned to me</option>
+                <option value="unassigned">Unassigned</option>
+                {users.map((member) => (
+                  <option key={member._id} value={member._id}>{member.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <p className="label">Due date</p>
+              <label className="flex items-center gap-2 text-xs text-surface-600 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={overdueOnly}
+                  onChange={(event) => { setOverdueOnly(event.target.checked); setPage(1); }}
+                />
+                Overdue only
+              </label>
+              <button type="button" className="btn-ghost btn-sm mt-2" onClick={resetFilters}>
+                Reset filters
+              </button>
+            </div>
+          </div>
         )}
       </div>
 
-      {/* Filter panel */}
-      {filterPanelOpen && (
-        <div className="card p-4 grid grid-cols-2 md:grid-cols-4 gap-4 animate-scale-in">
-          <div>
-            <p className="label">Status</p>
-            <div className="space-y-1.5">
-              {TASK_STATUSES.map((s) => (
-                <label key={s} className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={statusFilters.includes(s)}
-                    onChange={(e) => {
-                      if (e.target.checked) setStatusFilters([...statusFilters, s]);
-                      else setStatusFilters(statusFilters.filter((x) => x !== s));
-                    }}
-                    className="rounded"
-                  />
-                  <StatusBadge status={s} />
-                </label>
-              ))}
-            </div>
-          </div>
-          <div>
-            <p className="label">Priority</p>
-            <div className="space-y-1.5">
-              {TASK_PRIORITIES.map((p) => (
-                <label key={p} className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={priorityFilters.includes(p)}
-                    onChange={(e) => {
-                      if (e.target.checked) setPriorityFilters([...priorityFilters, p]);
-                      else setPriorityFilters(priorityFilters.filter((x) => x !== p));
-                    }}
-                    className="rounded"
-                  />
-                  <PriorityBadge priority={p} />
-                </label>
-              ))}
-            </div>
-          </div>
-          <div>
-            <p className="label">Due Date</p>
-            <label className="flex items-center gap-2 cursor-pointer mt-1">
-              <input type="checkbox" checked={overdueOnly} onChange={(e) => setOverdueOnly(e.target.checked)} className="rounded" />
-              <span className="text-sm text-surface-700">Overdue only</span>
-            </label>
-          </div>
+      {/* Bulk bar */}
+      {selectedIds.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 mb-3 px-3 py-2 rounded-lg bg-primary-50 border border-primary-200 animate-slide-up">
+          <CheckSquare2 size={15} className="text-primary-600" />
+          <span className="text-xs font-medium text-primary-800">{selectedIds.length} selected</span>
+          <div className="flex-1" />
+          <select
+            className="input input-sm w-auto"
+            value=""
+            onChange={(event) => {
+              if (event.target.value) bulkMutation.mutate({ action: 'set_status', value: event.target.value });
+            }}
+            aria-label="Set status for selected tasks"
+          >
+            <option value="">Set status…</option>
+            {TASK_STATUSES.map((status) => (
+              <option key={status.id} value={status.id}>{status.label}</option>
+            ))}
+          </select>
+          <select
+            className="input input-sm w-auto"
+            value=""
+            onChange={(event) => {
+              if (event.target.value) bulkMutation.mutate({ action: 'set_priority', value: event.target.value });
+            }}
+            aria-label="Set priority for selected tasks"
+          >
+            <option value="">Set priority…</option>
+            {TASK_PRIORITIES.map((priority) => (
+              <option key={priority.id} value={priority.id}>{priority.label}</option>
+            ))}
+          </select>
+          <select
+            className="input input-sm w-auto"
+            value=""
+            onChange={(event) => {
+              const value = event.target.value;
+              if (value === '__unassigned') bulkMutation.mutate({ action: 'set_assignee', value: null });
+              else if (value) bulkMutation.mutate({ action: 'set_assignee', value });
+            }}
+            aria-label="Assign selected tasks"
+          >
+            <option value="">Assign to…</option>
+            <option value="__unassigned">Unassigned</option>
+            {users.map((member) => (
+              <option key={member._id} value={member._id}>{member.name}</option>
+            ))}
+          </select>
+          <button type="button" className="btn-danger-ghost btn-sm" onClick={() => setConfirmBulkDelete(true)}>
+            <Trash2 size={12} /> Delete
+          </button>
+          <button type="button" className="btn-ghost btn-sm" onClick={() => setSelectedIds([])}>
+            <X size={13} /> Clear
+          </button>
         </div>
       )}
 
-      {/* Bulk Action Bar */}
-      {bulkError && <Alert type="error" message={bulkError} dismissible onDismiss={() => setBulkError('')} />}
-      <BulkActionBar
-        selectedIds={[...selectedIds]}
-        onClear={() => setSelectedIds(new Set())}
-        onAction={applyBulkAction}
-      />
-
       {/* Table */}
       {isLoading ? (
-        <PageLoader />
+        <PageSkeleton cards={2} />
+      ) : isError ? (
+        <ErrorState message="Tasks could not be loaded." onRetry={refetch} />
       ) : tasks.length === 0 ? (
-        <div className="text-center py-20 card">
-          <ListFilter size={48} className="text-surface-200 mx-auto mb-4" />
-          <h2 className="text-base font-semibold text-surface-700 mb-1">No tasks found</h2>
-          <p className="text-sm text-surface-400">
-            {hasActiveFilters ? 'Try clearing some filters.' : 'No tasks in this workspace yet.'}
-          </p>
+        <div className="card">
+          <EmptyState
+            icon={ListFilter}
+            title={activeFilterCount || search ? 'No tasks match these filters' : 'No tasks yet'}
+            description={
+              activeFilterCount || search
+                ? 'Adjust the search or filters to find what you are looking for.'
+                : 'Create your first task to start tracking work in this workspace.'
+            }
+            action={
+              activeFilterCount || search ? (
+                <button type="button" className="btn-secondary" onClick={() => { resetFilters(); setSearch(''); }}>
+                  Clear filters
+                </button>
+              ) : (
+                <button type="button" className="btn-primary" onClick={() => setCreateOpen(true)}>
+                  <Plus size={14} /> New task
+                </button>
+              )
+            }
+          />
         </div>
       ) : (
         <div className="card overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full min-w-[860px] text-[13px]">
               <thead>
-                <tr className="border-b border-surface-100 bg-surface-50">
-                  <th className="px-4 py-3 text-left w-8">
-                    <button onClick={toggleSelectAll}>
-                      {selectedIds.size === tasks.length && tasks.length > 0
-                        ? <CheckSquare size={14} className="text-primary-600" />
-                        : <Square size={14} className="text-surface-400" />}
+                <tr className="table-head border-b border-surface-200">
+                  <th className="px-3 py-2 w-9">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedIds(allSelected ? [] : tasks.map((task) => task._id))}
+                      aria-label={allSelected ? 'Deselect all tasks' : 'Select all tasks'}
+                      className="text-surface-400 hover:text-surface-700"
+                    >
+                      {allSelected ? <CheckSquare2 size={15} className="text-primary-600" /> : <Square size={15} />}
                     </button>
                   </th>
-                  <th className="px-4 py-3 text-left font-medium text-surface-500 cursor-pointer hover:text-surface-800" onClick={() => handleSort('title')}>
-                    <span className="flex items-center">Task <SortIcon field="title" /></span>
-                  </th>
-                  <th className="px-4 py-3 text-left font-medium text-surface-500 cursor-pointer hover:text-surface-800" onClick={() => handleSort('status')}>
-                    <span className="flex items-center">Status <SortIcon field="status" /></span>
-                  </th>
-                  <th className="px-4 py-3 text-left font-medium text-surface-500 cursor-pointer hover:text-surface-800" onClick={() => handleSort('priority')}>
-                    <span className="flex items-center">Priority <SortIcon field="priority" /></span>
-                  </th>
-                  <th className="px-4 py-3 text-left font-medium text-surface-500">Assignee</th>
-                  <th className="px-4 py-3 text-left font-medium text-surface-500">Project</th>
-                  <th className="px-4 py-3 text-left font-medium text-surface-500 cursor-pointer hover:text-surface-800" onClick={() => handleSort('dueDate')}>
-                    <span className="flex items-center">Due <SortIcon field="dueDate" /></span>
-                  </th>
-                  <th className="px-4 py-3 text-left font-medium text-surface-500">Labels</th>
-                  <th className="px-4 py-3 text-left font-medium text-surface-500 cursor-pointer hover:text-surface-800" onClick={() => handleSort('updatedAt')}>
-                    <span className="flex items-center">Updated <SortIcon field="updatedAt" /></span>
-                  </th>
+                  <th className="px-3 py-2 text-left font-semibold">Task</th>
+                  <th className="px-3 py-2 text-left font-semibold">Status</th>
+                  <th className="px-3 py-2 text-left font-semibold">Priority</th>
+                  <th className="px-3 py-2 text-left font-semibold">Assignee</th>
+                  <th className="px-3 py-2 text-left font-semibold">Project</th>
+                  <th className="px-3 py-2 text-left font-semibold">Due</th>
+                  <th className="px-3 py-2 text-left font-semibold">Labels</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-surface-50">
+              <tbody className="divide-y divide-surface-100">
                 {tasks.map((task) => {
-                  const overdue = task.dueDate && isPast(new Date(task.dueDate)) && task.status !== 'done';
-                  const isSelected = selectedIds.has(task._id);
+                  const selected = selectedIds.includes(task._id);
+                  const overdue = isOverdue(task.dueDate, task.status);
                   return (
-                    <tr key={task._id} className={`hover:bg-surface-50 transition-colors ${isSelected ? 'bg-primary-50/50' : ''}`}>
-                      <td className="px-4 py-3">
-                        <button onClick={() => toggleSelect(task._id)}>
-                          {isSelected
-                            ? <CheckSquare size={14} className="text-primary-600" />
-                            : <Square size={14} className="text-surface-300" />}
+                    <tr
+                      key={task._id}
+                      className={`hover:bg-surface-50 transition-colors ${selected ? 'bg-primary-50/40' : ''}`}
+                    >
+                      <td className="px-3 py-2">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedIds(selected
+                            ? selectedIds.filter((id) => id !== task._id)
+                            : [...selectedIds, task._id])}
+                          aria-label={selected ? 'Deselect task' : 'Select task'}
+                          className="text-surface-400 hover:text-surface-700"
+                        >
+                          {selected ? <CheckSquare2 size={15} className="text-primary-600" /> : <Square size={15} />}
                         </button>
                       </td>
-                      <td className="px-4 py-3 max-w-xs">
-                        <p className="font-medium text-surface-900 truncate">{task.title}</p>
-                        {task.description && (
-                          <p className="text-xs text-surface-400 truncate mt-0.5">{task.description}</p>
+                      <td className="px-3 py-2 max-w-[320px]">
+                        <button type="button" onClick={() => setOpenTaskId(task._id)} className="text-left w-full group">
+                          <p className={`font-medium truncate ${task.status === 'done' ? 'text-surface-400 line-through' : 'text-surface-900 group-hover:text-primary-700'}`}>
+                            {task.title}
+                          </p>
+                          {task.description && (
+                            <p className="text-2xs text-surface-400 truncate">{task.description}</p>
+                          )}
+                        </button>
+                      </td>
+                      <td className="px-3 py-2"><StatusBadge status={task.status} /></td>
+                      <td className="px-3 py-2"><PriorityBadge priority={task.priority} /></td>
+                      <td className="px-3 py-2">
+                        {task.assignee ? (
+                          <span className="flex items-center gap-1.5">
+                            <Avatar user={task.assignee} size="xs" />
+                            <span className="text-xs text-surface-600 truncate max-w-[96px]">{task.assignee.name}</span>
+                          </span>
+                        ) : (
+                          <span className="text-2xs text-surface-300">Unassigned</span>
                         )}
                       </td>
-                      <td className="px-4 py-3"><StatusBadge status={task.status} /></td>
-                      <td className="px-4 py-3"><PriorityBadge priority={task.priority} /></td>
-                      <td className="px-4 py-3">
-                        {task.assignee
-                          ? <div className="flex items-center gap-1.5"><Avatar user={task.assignee} size="xs" /><span className="text-xs text-surface-600 truncate max-w-[80px]">{task.assignee.name}</span></div>
-                          : <span className="text-xs text-surface-300">Unassigned</span>}
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className="flex items-center gap-1 text-xs text-surface-600">
+                      <td className="px-3 py-2">
+                        <span className="flex items-center gap-1.5 text-xs text-surface-600">
                           <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: task.project?.color || '#6366f1' }} />
-                          <span className="truncate max-w-[100px]">{task.project?.name}</span>
+                          <span className="truncate max-w-[120px]">{task.project?.name}</span>
                         </span>
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-3 py-2">
                         {task.dueDate ? (
-                          <span className={`text-xs flex items-center gap-1 ${overdue ? 'text-red-600 font-medium' : 'text-surface-500'}`}>
-                            <Calendar size={11} />
-                            {isToday(new Date(task.dueDate)) ? 'Today' : format(new Date(task.dueDate), 'MMM d')}
+                          <span className={`text-xs whitespace-nowrap ${overdue ? 'text-red-600 font-medium' : 'text-surface-500'}`}>
+                            {dueLabel(task.dueDate)}
                           </span>
-                        ) : <span className="text-xs text-surface-300">—</span>}
+                        ) : (
+                          <span className="text-2xs text-surface-300">—</span>
+                        )}
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-3 py-2">
                         <div className="flex flex-wrap gap-1">
-                          {task.labels?.slice(0, 2).map((l) => <LabelBadge key={l} label={l} />)}
-                          {task.labels?.length > 2 && <span className="text-xs text-surface-400">+{task.labels.length - 2}</span>}
+                          {(task.labels || []).slice(0, 2).map((label) => <LabelBadge key={label} label={label} />)}
+                          {(task.labels || []).length > 2 && (
+                            <span className="text-2xs text-surface-400">+{task.labels.length - 2}</span>
+                          )}
                         </div>
-                      </td>
-                      <td className="px-4 py-3 text-xs text-surface-400">
-                        {format(new Date(task.updatedAt), 'MMM d')}
                       </td>
                     </tr>
                   );
@@ -528,58 +571,54 @@ export const ListViewPage = () => {
             </table>
           </div>
 
-          {/* Pagination */}
-          <div className="flex items-center justify-between px-4 py-3 border-t border-surface-100 bg-surface-50">
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-surface-500">Rows per page:</span>
+          <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5 border-t border-surface-200 bg-surface-50">
+            <div className="flex items-center gap-2 text-xs text-surface-500">
+              <span>Rows</span>
               <select
                 value={pageSize}
-                onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
-                className="input py-1 text-xs w-auto"
+                onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1); }}
+                className="input input-sm w-auto"
+                aria-label="Rows per page"
               >
-                {PAGE_SIZES.map((s) => <option key={s} value={s}>{s}</option>)}
+                {PAGE_SIZES.map((size) => <option key={size} value={size}>{size}</option>)}
               </select>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-surface-500">
-                {((page - 1) * pageSize) + 1}–{Math.min(page * pageSize, total)} of {total}
+              <span className="hidden sm:inline">
+                {total === 0 ? '0' : `${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, total)}`} of {total}
               </span>
-              <button
-                className="btn-ghost btn-sm"
-                disabled={page <= 1}
-                onClick={() => setPage(page - 1)}
-              >← Prev</button>
-              <button
-                className="btn-ghost btn-sm"
-                disabled={page >= totalPages}
-                onClick={() => setPage(page + 1)}
-              >Next →</button>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-2xs text-surface-400">Page {page} of {totalPages}</span>
+              <button type="button" className="btn-secondary btn-sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>
+                <ChevronLeft size={13} /> Prev
+              </button>
+              <button type="button" className="btn-secondary btn-sm" disabled={page >= totalPages} onClick={() => setPage(page + 1)}>
+                Next <ChevronRight size={13} />
+              </button>
             </div>
           </div>
         </div>
       )}
 
       {/* Dialogs */}
-      <SaveFilterDialog
-        isOpen={saveDialogOpen}
-        onClose={() => setSaveDialogOpen(false)}
-        onSave={(payload) => saveFilterMutation.mutate(payload)}
-        currentFilters={{ search: debouncedSearch, status: statusFilters, priority: priorityFilters, overdue: overdueOnly }}
-        currentSort={{ field: sortField, dir: sortDir }}
+      <TaskFormDialog isOpen={createOpen} onClose={() => setCreateOpen(false)} />
+      {openTaskId && <TaskPanel taskId={openTaskId} onClose={() => setOpenTaskId(null)} />}
+      <SaveViewDialog
+        isOpen={saveViewOpen}
+        onClose={() => setSaveViewOpen(false)}
+        isSaving={saveViewMutation.isPending}
+        onSave={(name) => saveViewMutation.mutate(name)}
       />
-
       <ConfirmDialog
-        isOpen={!!confirmBulk}
-        onClose={() => setConfirmBulk(null)}
-        title="Confirm Delete"
-        message={`Permanently delete ${selectedIds.size} selected task(s)? This cannot be undone.`}
-        confirmLabel="Delete"
+        isOpen={confirmBulkDelete}
+        onClose={() => setConfirmBulkDelete(false)}
+        onConfirm={() => { bulkMutation.mutate({ action: 'delete', value: null }); setConfirmBulkDelete(false); }}
+        title="Delete selected tasks"
+        message={`Permanently delete ${selectedIds.length} task(s) and their comments? This cannot be undone.`}
+        confirmLabel="Delete tasks"
         danger
-        onConfirm={() => {
-          bulkMutation.mutate({ taskIds: [...selectedIds], action: 'delete', value: null });
-          setConfirmBulk(null);
-        }}
       />
     </div>
   );
 };
+
+export default ListViewPage;

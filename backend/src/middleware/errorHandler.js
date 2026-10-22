@@ -41,6 +41,14 @@ export const errorHandler = (err, req, res, next) => {
     return res.status(401).json({ success: false, message: 'Token expired', code: 'TOKEN_EXPIRED' });
   }
 
+  // Database unreachable (Mongoose buffering timeout) → service unavailable
+  if (err.name === 'MongooseError' && /buffering timed out/i.test(err.message || '')) {
+    return res.status(503).json({
+      success: false,
+      message: 'The database is unavailable. Start MongoDB (or check MONGODB_URI) and try again.',
+    });
+  }
+
   // Operational errors with explicit status
   if (err.statusCode) {
     return res.status(err.statusCode).json({ success: false, message: err.message });

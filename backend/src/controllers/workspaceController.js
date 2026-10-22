@@ -69,7 +69,10 @@ export const getWorkspace = async (req, res, next) => {
 export const updateWorkspace = async (req, res, next) => {
   try {
     const updates = updateWorkspaceSchema.parse(req.body);
-    const workspace = await Workspace.findByIdAndUpdate(req.params.workspaceId, updates, { new: true });
+    const workspace = await Workspace.findByIdAndUpdate(req.params.workspaceId, updates, {
+      new: true,
+      runValidators: true,
+    });
     res.json({ success: true, data: { workspace } });
   } catch (err) {
     next(err);
@@ -176,7 +179,7 @@ export const acceptInvitation = async (req, res, next) => {
     }
 
     // Ensure the logged-in user email matches
-    if (req.user.email !== invitation.email) {
+    if (req.user.email.toLowerCase() !== invitation.email.toLowerCase()) {
       throw createError('This invitation was sent to a different email address', 403);
     }
 
@@ -210,8 +213,55 @@ export const getInvitation = async (req, res, next) => {
   }
 };
 
+// ── Workspace activity feed (used by notifications) ───────────────────────────
+export const getWorkspaceActivity = async (req, res, next) => {
+  try {
+    const limit = Math.min(50, parseInt(req.query.limit, 10) || 15);
+    const activities = await Activity.find({ workspace: req.params.workspaceId })
+      .populate('actor', 'name avatar')
+      .populate('project', 'name emoji color')
+      .sort({ createdAt: -1 })
+      .limit(limit);
+    res.json({ success: true, data: { activities } });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// ── Pending invitations ───────────────────────────────────────────────────────
+export const getInvitations = async (req, res, next) => {
+  try {
+    const invitations = await Invitation.find({
+      workspace: req.params.workspaceId,
+      status: 'pending',
+      expiresAt: { $gt: new Date() },
+    })
+      .populate('invitedBy', 'name')
+      .sort({ createdAt: -1 })
+      .select('-token');
+    res.json({ success: true, data: { invitations } });
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const revokeInvitation = async (req, res, next) => {
+  try {
+    const invitation = await Invitation.findOneAndUpdate(
+      { _id: req.params.invitationId, workspace: req.params.workspaceId, status: 'pending' },
+      { status: 'revoked' },
+      { new: true },
+    );
+    if (!invitation) throw createError('Invitation not found', 404);
+    res.json({ success: true, message: 'Invitation revoked' });
+  } catch (err) {
+    next(err);
+  }
+};
+
 export default {
   createWorkspace, getMyWorkspaces, getWorkspace, updateWorkspace,
   getMembers, updateMemberRole, removeMember,
   inviteMember, acceptInvitation, getInvitation,
+  getWorkspaceActivity, getInvitations, revokeInvitation,
 };

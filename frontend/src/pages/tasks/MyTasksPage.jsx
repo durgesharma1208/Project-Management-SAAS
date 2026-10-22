@@ -1,100 +1,209 @@
-import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Search, Plus, Filter, CheckSquare, Calendar, Flag } from 'lucide-react';
-import { format, isPast, isToday } from 'date-fns';
-import api from '../../lib/api';
+import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { isToday, isTomorrow, addDays } from 'date-fns';
+import { ArrowRight, CheckSquare, ListFilter, Plus, Search } from 'lucide-react';
 import { useWorkspace } from '../../contexts/WorkspaceContext';
-import { PageLoader } from '../../components/ui/Spinner';
-import { PriorityBadge, StatusBadge } from '../../components/ui/Badge';
-import { Avatar } from '../../components/ui/Avatar';
-import { Dialog } from '../../components/ui/Dialog';
-import { FormField, Input, Select, Textarea } from '../../components/ui/Form';
-import { Alert, extractError } from '../../components/ui/Alert';
-import { useAuth } from '../../contexts/AuthContext';
-import { useForm } from 'react-hook-form';
+import { useToast } from '../../components/ui/Toast';
+import { EmptyState, ErrorState, PageHeader, PageSkeleton } from '../../components/ui/Primitives';
+import { TaskListItem } from '../../components/tasks/TaskListItem';
+import { TaskFormDialog } from '../../components/tasks/TaskFormDialog';
+import { TaskPanel } from '../../components/tasks/TaskPanel';
+import { tasksApi, taskKeys, dashboardKeys, projectKeys } from '../../lib/taskApi';
+import { TASK_STATUSES } from '../../lib/constants';
+import { isOverdue } from '../../lib/format';
+import { extractError } from '../../components/ui/Alert';
+
+const GROUPS = [
+  { id: 'overdue', label: 'Overdue', tone: 'text-red-600' },
+  { id: 'today', label: 'Today', tone: 'text-amber-600' },
+  { id: 'week', label: 'Next 7 days', tone: 'text-surface-700' },
+  { id: 'later', label: 'Later', tone: 'text-surface-700' },
+  { id: 'none', label: 'No due date', tone: 'text-surface-500' },
+];
+
+const groupForTask = (task) => {
+  if (!task.dueDate) return 'none';
+  const due = new Date(task.dueDate);
+  if (isOverdue(task.dueDate, task.status)) return 'overdue';
+  if (isToday(due)) return 'today';
+  if (isTomorrow(due) || due <= addDays(new Date(), 7)) return 'week';
+  return 'later';
+};
 
 export const MyTasksPage = () => {
   const { activeWorkspaceId } = useWorkspace();
-  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  const toast = useToast();
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
+  const [status, setStatus] = useState('');
+  const [createOpen, setCreateOpen] = useState(false);
+  const [selectedTaskId, setSelectedTaskId] = useState(null);
 
-  const { data, isLoading } = useQuery({
-    queryKey: ['my-tasks', activeWorkspaceId, search, statusFilter],
-    queryFn: () => api.get(`/workspaces/${activeWorkspaceId}/tasks`, {
-      params: {
-        myTasks: 'true',
-        search: search || undefined,
-        status: statusFilter || undefined,
-      }
-    }).then(r => r.data.data.tasks),
-    enabled: !!activeWorkspaceId,
+  const { data, isLoading, isError, refetch } = useQuery({
+    queryKey: taskKeys.list(activeWorkspaceId, { scope: 'my-tasks', search, status }),
+    queryFn: () => tasksApi.list(activeWorkspaceId, {
+      myTasks: 'true',
+      search: search || undefined,
+      status: status || undefined,
+      limit: 200,
+      sort: 'dueDate',
+      dir: 'asc',
+    }),
+    enabled: Boolean(activeWorkspaceId),
   });
 
-  const tasks = data || [];
+  const tasks = useMemo(() => data?.tasks ?? [], [data]);
+
+  const completeMutation = useMutation({
+    mutationFn: (task) => tasksApi.update(activeWorkspaceId, task._id, {
+      status: task.status === 'done' ? 'todo' : 'done',
+    }),
+    onSuccess: (task) => {
+      queryClient.invalidateQueries({ queryKey: taskKeys.all(activeWorkspaceId) });
+      queryClient.invalidateQueries({ queryKey: dashboardKeys.workspace(activeWorkspaceId) });
+      queryClient.invalidateQueries({ queryKey: projectKeys.all(activeWorkspaceId) });
+      toast.success(task.status === 'done' ? 'Task completed' : 'Task reopened');
+    },
+    onError: (error) => toast.error(extractError(error)),
+  });
+
+  const grouped = useMemo(() => {
+    const buckets = Object.fromEntries(GROUPS.map((group) => [group.id, []]));
+    tasks.forEach((task) => {
+      if (task.status === 'done') return;
+      buckets[groupForTask(task)].push(task);
+    });
+    return buckets;
+  }, [tasks]);
+
+  const openTasks = tasks.filter((task) => task.status !== 'done');
+  const doneTasks = tasks.filter((task) => task.status === 'done');
 
   return (
-    <div className="p-6 max-w-4xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-xl font-bold text-surface-900">My Tasks</h1>
-          <p className="text-sm text-surface-500 mt-0.5">Tasks assigned to you</p>
-        </div>
-      </div>
+    <div className="page">
+      <PageHeader
+        title="My Tasks"
+        description={`${openTasks.length} open ${openTasks.length === 1 ? 'task' : 'tasks'} assigned to you`}
+        actions={
+          <>
+            <Link to="/tasks/list" className="btn-secondary">
+              <ListFilter size={14} /> All tasks
+            </Link>
+            <button type="button" className="btn-primary" onClick={() => setCreateOpen(true)}>
+              <Plus size={14} /> New task
+            </button>
+          </>
+        }
+      />
 
-      {/* Filters */}
-      <div className="flex gap-3 mb-5 flex-wrap">
-        <div className="flex items-center gap-2 bg-white border border-surface-200 rounded-lg px-3 py-2 w-56">
-          <Search size={13} className="text-surface-400" />
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search tasks…" className="bg-transparent outline-none text-sm text-surface-700 placeholder:text-surface-400 w-full" />
+      <div className="flex flex-wrap items-center gap-2 mb-4">
+        <div className="relative flex-1 min-w-[200px] max-w-sm">
+          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-surface-400" />
+          <input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search your tasks…"
+            className="input pl-8"
+            aria-label="Search my tasks"
+          />
         </div>
-        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="input w-auto">
+        <select
+          value={status}
+          onChange={(event) => setStatus(event.target.value)}
+          className="input w-auto"
+          aria-label="Filter by status"
+        >
           <option value="">All statuses</option>
-          <option value="backlog">Backlog</option>
-          <option value="todo">To Do</option>
-          <option value="in_progress">In Progress</option>
-          <option value="in_review">In Review</option>
-          <option value="done">Done</option>
+          {TASK_STATUSES.map((option) => (
+            <option key={option.id} value={option.id}>{option.label}</option>
+          ))}
         </select>
       </div>
 
       {isLoading ? (
-        <PageLoader />
-      ) : tasks.length === 0 ? (
-        <div className="text-center py-20">
-          <CheckSquare size={48} className="text-surface-200 mx-auto mb-4" />
-          <h2 className="text-lg font-semibold text-surface-700 mb-2">
-            {search || statusFilter ? 'No matching tasks' : 'No tasks assigned to you'}
-          </h2>
-          <p className="text-sm text-surface-400">
-            {search || statusFilter ? 'Try different filters' : 'Tasks assigned to you will appear here'}
-          </p>
+        <PageSkeleton cards={2} />
+      ) : isError ? (
+        <ErrorState message="Your tasks could not be loaded." onRetry={refetch} />
+      ) : openTasks.length === 0 && doneTasks.length === 0 ? (
+        <div className="card">
+          <EmptyState
+            icon={CheckSquare}
+            title={search || status ? 'No tasks match your search' : 'Nothing assigned to you'}
+            description={
+              search || status
+                ? 'Try a different keyword or clear the status filter.'
+                : 'Tasks assigned to you across all projects will show up here.'
+            }
+            action={
+              search || status ? (
+                <button type="button" className="btn-secondary" onClick={() => { setSearch(''); setStatus(''); }}>
+                  Clear filters
+                </button>
+              ) : (
+                <button type="button" className="btn-primary" onClick={() => setCreateOpen(true)}>
+                  <Plus size={14} /> Create a task
+                </button>
+              )
+            }
+          />
         </div>
       ) : (
-        <div className="card divide-y divide-surface-100">
-          {tasks.map(task => {
-            const overdue = task.dueDate && isPast(new Date(task.dueDate)) && task.status !== 'done';
+        <div className="space-y-4">
+          {GROUPS.map((group) => {
+            const groupTasks = grouped[group.id];
+            if (!groupTasks.length) return null;
             return (
-              <div key={task._id} className="flex items-center gap-4 px-5 py-3.5 hover:bg-surface-50 transition-colors">
-                <StatusBadge status={task.status} showLabel={false} />
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-surface-900 truncate">{task.title}</p>
-                  <div className="flex items-center gap-2 mt-0.5">
-                    <span className="text-xs text-surface-400">{task.project?.name}</span>
-                  </div>
+              <section key={group.id} className="card overflow-hidden">
+                <header className="flex items-center gap-2 px-4 h-11 border-b border-surface-100">
+                  <h2 className={`section-title ${group.tone}`}>{group.label}</h2>
+                  <span className="badge bg-surface-100 text-surface-500">{groupTasks.length}</span>
+                </header>
+                <div className="divide-y divide-surface-100">
+                  {groupTasks.map((task) => (
+                    <TaskListItem
+                      key={task._id}
+                      task={task}
+                      showProject
+                      onOpen={setSelectedTaskId}
+                      onToggleComplete={(item) => completeMutation.mutate(item)}
+                      isToggling={completeMutation.isPending && completeMutation.variables?._id === task._id}
+                    />
+                  ))}
                 </div>
-                <PriorityBadge priority={task.priority} showLabel={false} />
-                {task.dueDate && (
-                  <span className={`text-xs flex items-center gap-1 ${overdue ? 'text-red-600 font-medium' : 'text-surface-400'}`}>
-                    <Calendar size={11} />
-                    {isToday(new Date(task.dueDate)) ? 'Today' : format(new Date(task.dueDate), 'MMM d')}
-                  </span>
-                )}
-              </div>
+              </section>
             );
           })}
+
+          {doneTasks.length > 0 && (
+            <section className="card overflow-hidden">
+              <header className="flex items-center gap-2 px-4 h-11 border-b border-surface-100">
+                <h2 className="section-title text-surface-500">Recently completed</h2>
+                <span className="badge bg-surface-100 text-surface-500">{doneTasks.length}</span>
+              </header>
+              <div className="divide-y divide-surface-100">
+                {doneTasks.slice(0, 8).map((task) => (
+                  <TaskListItem
+                    key={task._id}
+                    task={task}
+                    showProject
+                    onOpen={setSelectedTaskId}
+                    onToggleComplete={(item) => completeMutation.mutate(item)}
+                  />
+                ))}
+              </div>
+              <Link to="/tasks/list" className="flex items-center justify-center gap-1 py-2.5 text-xs font-medium text-primary-600 hover:bg-primary-50/50">
+                See all tasks <ArrowRight size={12} />
+              </Link>
+            </section>
+          )}
         </div>
       )}
+
+      <TaskFormDialog isOpen={createOpen} onClose={() => setCreateOpen(false)} />
+      {selectedTaskId && <TaskPanel taskId={selectedTaskId} onClose={() => setSelectedTaskId(null)} />}
     </div>
   );
 };
+
+export default MyTasksPage;

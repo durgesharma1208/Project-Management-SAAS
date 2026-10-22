@@ -1,4 +1,5 @@
-import { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import api from '../lib/api';
 
 const AuthContext = createContext(null);
@@ -6,18 +7,30 @@ const AuthContext = createContext(null);
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
 
-  // Restore session from localStorage token on mount
+  // Restore the session from the stored access token on first load.
   useEffect(() => {
+    let cancelled = false;
     const token = localStorage.getItem('accessToken');
     if (!token) {
       setLoading(false);
-      return;
+      return () => { cancelled = true; };
     }
+
     api.get('/auth/me')
-      .then(({ data }) => setUser(data.data.user))
-      .catch(() => localStorage.removeItem('accessToken'))
-      .finally(() => setLoading(false));
+      .then(({ data }) => {
+        if (!cancelled) setUser(data.data.user);
+      })
+      .catch(() => {
+        localStorage.removeItem('accessToken');
+        if (!cancelled) setUser(null);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => { cancelled = true; };
   }, []);
 
   const login = useCallback(async (credentials) => {
@@ -35,18 +48,38 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   const logout = useCallback(async () => {
-    try { await api.post('/auth/logout'); } catch { /* ignore */ }
+    try {
+      await api.post('/auth/logout');
+    } catch {
+      // Logging out locally still matters if the network call fails.
+    }
     localStorage.removeItem('accessToken');
     setUser(null);
+    queryClient.clear();
+  }, [queryClient]);
+
+  const updateUser = useCallback((updated) => {
+    setUser((prev) => ({ ...(prev || {}), ...updated }));
   }, []);
 
-  const updateUser = useCallback((updated) => setUser((prev) => ({ ...prev, ...updated })), []);
+  const refreshUser = useCallback(async () => {
+    const { data } = await api.get('/auth/me');
+    setUser(data.data.user);
+    return data.data.user;
+  }, []);
 
-  return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout, updateUser, isAuthenticated: !!user }}>
-      {children}
-    </AuthContext.Provider>
-  );
+  const value = useMemo(() => ({
+    user,
+    loading,
+    login,
+    register,
+    logout,
+    updateUser,
+    refreshUser,
+    isAuthenticated: Boolean(user),
+  }), [user, loading, login, register, logout, updateUser, refreshUser]);
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
 
 export const useAuth = () => {
