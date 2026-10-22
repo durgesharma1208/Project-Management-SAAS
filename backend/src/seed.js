@@ -13,13 +13,13 @@
 import 'dotenv/config';
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
-import User from './src/models/User.js';
-import Workspace from './src/models/Workspace.js';
-import Membership from './src/models/Membership.js';
-import Team from './src/models/Team.js';
-import Project from './src/models/Project.js';
-import Task from './src/models/Task.js';
-import Activity from './src/models/Activity.js';
+import User from './models/User.js';
+import Workspace from './models/Workspace.js';
+import Membership from './models/Membership.js';
+import Team from './models/Team.js';
+import Project from './models/Project.js';
+import Task from './models/Task.js';
+import Activity from './models/Activity.js';
 
 await mongoose.connect(process.env.MONGODB_URI);
 console.log('🌱 Connected to MongoDB, seeding…');

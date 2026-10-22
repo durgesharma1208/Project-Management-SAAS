@@ -1,316 +1,333 @@
-import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useMemo, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  GitBranch, Plus, Check, Shield, AlertTriangle, Layers,
-  ChevronRight, RefreshCw, Trash2, ArrowRight
+  ArrowRight, Check, GitBranch, Layers, Plus, RefreshCw, ShieldCheck, Trash2,
 } from 'lucide-react';
 import { useWorkspace } from '../../contexts/WorkspaceContext';
-import { workflowsApi, workflowKeys } from '../../lib/taskApi';
-import { PageLoader } from '../../components/ui/Spinner';
+import { useToast } from '../../components/ui/Toast';
+import { EmptyState, ErrorState, PageHeader, PageSkeleton } from '../../components/ui/Primitives';
 import { Dialog } from '../../components/ui/Dialog';
-import { Alert, extractError } from '../../components/ui/Alert';
+import { FormField, Input, Select, Textarea } from '../../components/ui/Form';
+import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
+import { Spinner } from '../../components/ui/Spinner';
+import { workflowsApi, workflowKeys } from '../../lib/taskApi';
+import { extractError } from '../../components/ui/Alert';
 
-const CATEGORY_COLORS = {
-  not_started: 'bg-surface-100 text-surface-700',
-  active: 'bg-blue-50 text-blue-700',
-  completed: 'bg-green-50 text-green-700',
-  cancelled: 'bg-red-50 text-red-700',
+const STARTER_WORKFLOWS = {
+  standard: {
+    label: 'Standard project (4 stages)',
+    statuses: [
+      { id: 'backlog', name: 'Backlog', color: '#94a3b8', category: 'not_started', position: 0 },
+      { id: 'todo', name: 'To Do', color: '#3b82f6', category: 'not_started', position: 1 },
+      { id: 'in_progress', name: 'In Progress', color: '#f59e0b', category: 'active', position: 2 },
+      { id: 'done', name: 'Done', color: '#10b981', category: 'completed', position: 3 },
+    ],
+    transitions: [
+      { from: 'backlog', to: 'todo' },
+      { from: 'todo', to: 'in_progress' },
+      { from: 'in_progress', to: 'done' },
+      { from: 'in_progress', to: 'todo' },
+      { from: 'todo', to: 'backlog' },
+      { from: 'done', to: 'in_progress' },
+    ],
+  },
+  development: {
+    label: 'Software development (5 stages)',
+    statuses: [
+      { id: 'backlog', name: 'Backlog', color: '#94a3b8', category: 'not_started', position: 0 },
+      { id: 'todo', name: 'To Do', color: '#3b82f6', category: 'not_started', position: 1 },
+      { id: 'in_progress', name: 'In Progress', color: '#f59e0b', category: 'active', position: 2 },
+      { id: 'in_review', name: 'In Review', color: '#8b5cf6', category: 'active', position: 3 },
+      { id: 'done', name: 'Done', color: '#10b981', category: 'completed', position: 4 },
+    ],
+    transitions: [
+      { from: 'backlog', to: 'todo' },
+      { from: 'todo', to: 'in_progress' },
+      { from: 'in_progress', to: 'in_review' },
+      { from: 'in_review', to: 'done' },
+      { from: 'in_review', to: 'in_progress' },
+      { from: 'in_progress', to: 'todo' },
+      { from: 'done', to: 'in_review' },
+    ],
+  },
+};
+
+const CreateWorkflowDialog = ({ isOpen, onClose }) => {
+  const { activeWorkspaceId } = useWorkspace();
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [starter, setStarter] = useState('standard');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (isOpen) { setName(''); setDescription(''); setStarter('standard'); setError(''); }
+  }, [isOpen]);
+
+  const mutation = useMutation({
+    mutationFn: () => {
+      const preset = STARTER_WORKFLOWS[starter];
+      return workflowsApi.create(activeWorkspaceId, {
+        name: name.trim(),
+        description: description.trim(),
+        statuses: preset.statuses,
+        transitions: preset.transitions,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: workflowKeys.all(activeWorkspaceId) });
+      toast.success('Workflow created');
+      onClose();
+    },
+    onError: (apiError) => setError(extractError(apiError)),
+  });
+
+  return (
+    <Dialog
+      isOpen={isOpen}
+      onClose={onClose}
+      title="Create workflow"
+      description="Workflows define the statuses tasks can move through."
+      footer={
+        <>
+          <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={() => { if (!name.trim()) { setError('A workflow name is required'); return; } setError(''); mutation.mutate(); }}
+            disabled={mutation.isPending}
+          >
+            {mutation.isPending && <Spinner size={14} />} Create workflow
+          </button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        <FormField label="Workflow name" required id="wf-name" error={error}>
+          <Input id="wf-name" value={name} onChange={(event) => setName(event.target.value)} placeholder="Design lifecycle" autoFocus />
+        </FormField>
+        <FormField label="Description" id="wf-desc">
+          <Textarea id="wf-desc" rows={2} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="What is this workflow for?" />
+        </FormField>
+        <FormField label="Starting statuses" id="wf-starter">
+          <Select id="wf-starter" value={starter} onChange={(event) => setStarter(event.target.value)}>
+            {Object.entries(STARTER_WORKFLOWS).map(([key, preset]) => (
+              <option key={key} value={key}>{preset.label}</option>
+            ))}
+          </Select>
+        </FormField>
+        <p className="text-2xs text-surface-400">
+          You can adjust transitions and mark this workflow as the workspace default afterwards.
+        </p>
+      </div>
+    </Dialog>
+  );
 };
 
 export const WorkflowsPage = () => {
-  const { activeWorkspaceId } = useWorkspace();
-  const qc = useQueryClient();
-  const [selectedWorkflow, setSelectedWorkflow] = useState(null);
-  const [createDialogOpen, setCreateDialogOpen] = useState(false);
-  const [apiError, setApiError] = useState(null);
+  const { activeWorkspaceId, canManageWorkspace } = useWorkspace();
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  const [selectedId, setSelectedId] = useState(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
-  // Form states for new workflow
-  const [newWfName, setNewWfName] = useState('');
-  const [newWfDesc, setNewWfDesc] = useState('');
-
-  const { data: workflows = [], isLoading } = useQuery({
+  const { data: workflows = [], isLoading, isError, refetch } = useQuery({
     queryKey: workflowKeys.all(activeWorkspaceId),
     queryFn: () => workflowsApi.list(activeWorkspaceId),
-    enabled: !!activeWorkspaceId,
+    enabled: Boolean(activeWorkspaceId),
   });
 
-  const seedTemplatesMutation = useMutation({
+  const active = useMemo(
+    () => workflows.find((workflow) => workflow._id === selectedId) || workflows[0],
+    [workflows, selectedId],
+  );
+
+  const refresh = () => queryClient.invalidateQueries({ queryKey: workflowKeys.all(activeWorkspaceId) });
+
+  const seedMutation = useMutation({
     mutationFn: () => workflowsApi.seedTemplates(activeWorkspaceId),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: workflowKeys.all(activeWorkspaceId) });
-    },
-    onError: (e) => setApiError(extractError(e)),
+    onSuccess: () => { refresh(); toast.success('Workflow templates loaded'); },
+    onError: (error) => toast.error(extractError(error)),
   });
 
-  const createMutation = useMutation({
-    mutationFn: (payload) => workflowsApi.create(activeWorkspaceId, payload),
-    onSuccess: (wf) => {
-      qc.invalidateQueries({ queryKey: workflowKeys.all(activeWorkspaceId) });
-      setSelectedWorkflow(wf);
-      setCreateDialogOpen(false);
-      setNewWfName('');
-      setNewWfDesc('');
-    },
-    onError: (e) => setApiError(extractError(e)),
-  });
-
-  const setDefaultMutation = useMutation({
-    mutationFn: (wfId) => workflowsApi.update(activeWorkspaceId, wfId, { isDefault: true }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: workflowKeys.all(activeWorkspaceId) });
-    },
-    onError: (e) => setApiError(extractError(e)),
+  const defaultMutation = useMutation({
+    mutationFn: (workflow) => workflowsApi.update(activeWorkspaceId, workflow._id, { isDefault: true }),
+    onSuccess: () => { refresh(); toast.success('Default workflow updated'); },
+    onError: (error) => toast.error(extractError(error)),
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (wfId) => workflowsApi.delete(activeWorkspaceId, wfId),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: workflowKeys.all(activeWorkspaceId) });
-      setSelectedWorkflow(null);
-    },
-    onError: (e) => setApiError(extractError(e)),
+    mutationFn: (workflow) => workflowsApi.remove(activeWorkspaceId, workflow._id),
+    onSuccess: () => { refresh(); setConfirmDelete(false); setSelectedId(null); toast.success('Workflow deleted'); },
+    onError: (error) => toast.error(extractError(error)),
   });
 
-  const currentWf = selectedWorkflow || workflows[0];
-
-  const handleCreateDefault = () => {
-    createMutation.mutate({
-      name: newWfName,
-      description: newWfDesc,
-      statuses: [
-        { id: 'backlog', name: 'Backlog', color: '#94a3b8', category: 'not_started', position: 0 },
-        { id: 'todo', name: 'To Do', color: '#3b82f6', category: 'not_started', position: 1 },
-        { id: 'in_progress', name: 'In Progress', color: '#f59e0b', category: 'active', position: 2 },
-        { id: 'done', name: 'Done', color: '#22c55e', category: 'completed', position: 3 },
-      ],
-      transitions: [
-        { from: 'backlog', to: 'todo' },
-        { from: 'todo', to: 'in_progress' },
-        { from: 'in_progress', to: 'done' },
-        { from: 'in_progress', to: 'todo' },
-        { from: 'done', to: 'in_progress' },
-      ],
-    });
-  };
-
-  if (isLoading) return <PageLoader />;
-
   return (
-    <div className="p-6 max-w-7xl mx-auto space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-surface-900 flex items-center gap-2">
-            <GitBranch className="text-primary-600" size={24} />
-            Task Blueprints & Workflows
-          </h1>
-          <p className="text-sm text-surface-500 mt-1">
-            Define custom lifecycle stages and enforce allowed transitions for tasks.
-          </p>
-        </div>
-        <div className="flex gap-2">
-          {workflows.length === 0 && (
-            <button
-              onClick={() => seedTemplatesMutation.mutate()}
-              className="btn-secondary btn-sm flex items-center gap-1.5"
-            >
-              <RefreshCw size={14} /> Seed Default Templates
-            </button>
-          )}
-          <button
-            onClick={() => setCreateDialogOpen(true)}
-            className="btn-primary btn-sm flex items-center gap-1.5"
-          >
-            <Plus size={14} /> Create Workflow
-          </button>
-        </div>
-      </div>
+    <div className="page">
+      <PageHeader
+        title="Workflows"
+        description="Define the lifecycle statuses and allowed transitions for your projects."
+        actions={
+          <>
+            {workflows.length === 0 && canManageWorkspace && (
+              <button type="button" className="btn-secondary" onClick={() => seedMutation.mutate()} disabled={seedMutation.isPending}>
+                <RefreshCw size={14} /> Load templates
+              </button>
+            )}
+            {canManageWorkspace && (
+              <button type="button" className="btn-primary" onClick={() => setCreateOpen(true)}>
+                <Plus size={14} /> New workflow
+              </button>
+            )}
+          </>
+        }
+      />
 
-      <Alert type="error" message={apiError} dismissible onDismiss={() => setApiError(null)} />
+      {!canManageWorkspace && (
+        <p className="mb-3 text-xs text-surface-500 flex items-center gap-1.5">
+          <ShieldCheck size={13} /> Only workspace admins can create or change workflows.
+        </p>
+      )}
 
-      {workflows.length === 0 ? (
-        <div className="card text-center py-16">
-          <Layers size={48} className="mx-auto text-surface-300 mb-3" />
-          <h3 className="text-base font-semibold text-surface-800">No Custom Workflows Yet</h3>
-          <p className="text-sm text-surface-500 max-w-md mx-auto mt-1 mb-5">
-            Get started immediately by seeding standard agile templates (Software Development, Bug Resolution, Standard Project).
-          </p>
-          <button
-            onClick={() => seedTemplatesMutation.mutate()}
-            className="btn-primary inline-flex items-center gap-2"
-          >
-            <RefreshCw size={15} /> Load Workflow Templates
-          </button>
+      {isLoading ? (
+        <PageSkeleton cards={2} />
+      ) : isError ? (
+        <ErrorState message="Workflows could not be loaded." onRetry={refetch} />
+      ) : workflows.length === 0 ? (
+        <div className="card">
+          <EmptyState
+            icon={Layers}
+            title="No workflows yet"
+            description="Load the built-in templates or create your own status set. Projects without a workflow allow any status change."
+            action={canManageWorkspace ? (
+              <button type="button" className="btn-primary" onClick={() => seedMutation.mutate()}>
+                <RefreshCw size={14} /> Load workflow templates
+              </button>
+            ) : null}
+          />
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {/* Workflows List */}
-          <div className="space-y-3">
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-surface-400 px-1">
-              Available Workflows
-            </h3>
-            <div className="card divide-y divide-surface-100 overflow-hidden">
-              {workflows.map((wf) => {
-                const isSelected = currentWf?._id === wf._id;
-                return (
-                  <button
-                    key={wf._id}
-                    onClick={() => setSelectedWorkflow(wf)}
-                    className={`w-full text-left p-4 transition-colors flex items-center justify-between ${
-                      isSelected ? 'bg-primary-50/60' : 'hover:bg-surface-50'
-                    }`}
-                  >
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-semibold text-surface-900 text-sm">{wf.name}</span>
-                        {wf.isDefault && (
-                          <span className="badge bg-green-50 text-green-700 border border-green-200 text-[10px]">
-                            Default
-                          </span>
-                        )}
-                        {wf.isTemplate && (
-                          <span className="badge bg-purple-50 text-purple-700 border border-purple-200 text-[10px]">
-                            Template
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-xs text-surface-500 mt-1 line-clamp-1">{wf.description || 'No description'}</p>
-                      <p className="text-[11px] text-surface-400 mt-2">
-                        {wf.statuses?.length || 0} statuses • {wf.transitions?.length || 0} transition rules
-                      </p>
-                    </div>
-                    <ChevronRight size={16} className={isSelected ? 'text-primary-600' : 'text-surface-300'} />
-                  </button>
-                );
-              })}
-            </div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <div className="space-y-2">
+            {workflows.map((workflow) => {
+              const isActive = active?._id === workflow._id;
+              return (
+                <button
+                  key={workflow._id}
+                  type="button"
+                  onClick={() => setSelectedId(workflow._id)}
+                  className={`w-full text-left card p-3 transition-colors ${
+                    isActive ? 'border-primary-300 bg-primary-50/40' : 'hover:border-surface-300'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <GitBranch size={14} className={isActive ? 'text-primary-600' : 'text-surface-400'} />
+                    <span className="text-[13px] font-medium text-surface-900 truncate">{workflow.name}</span>
+                    {workflow.isDefault && <span className="badge bg-emerald-50 text-emerald-700">Default</span>}
+                    {workflow.isTemplate && <span className="badge bg-violet-50 text-violet-700">Template</span>}
+                  </div>
+                  <p className="text-2xs text-surface-500 mt-1 line-clamp-2">{workflow.description || 'No description'}</p>
+                  <p className="text-2xs text-surface-400 mt-1.5">
+                    {workflow.statuses?.length || 0} statuses · {workflow.transitions?.length || 0} transitions
+                  </p>
+                </button>
+              );
+            })}
           </div>
 
-          {/* Workflow Details & Transitions Editor Preview */}
-          <div className="md:col-span-2 space-y-4">
-            {currentWf ? (
-              <div className="card p-6 space-y-6">
-                <div className="flex items-start justify-between pb-4 border-b border-surface-100">
+          {active && (
+            <div className="lg:col-span-2 space-y-4">
+              <section className="card p-4">
+                <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
                   <div>
-                    <div className="flex items-center gap-3">
-                      <h2 className="text-lg font-bold text-surface-900">{currentWf.name}</h2>
-                      {currentWf.isDefault ? (
-                        <span className="badge bg-green-100 text-green-800 text-xs font-medium">Default Workflow</span>
-                      ) : (
+                    <h2 className="text-[15px] font-semibold text-surface-900 flex items-center gap-2">
+                      {active.name}
+                      {active.isDefault && <span className="badge bg-emerald-50 text-emerald-700"><Check size={11} /> Workspace default</span>}
+                    </h2>
+                    <p className="text-xs text-surface-500 mt-0.5">{active.description || 'No description'}</p>
+                  </div>
+                  {canManageWorkspace && (
+                    <div className="flex items-center gap-1.5">
+                      {!active.isDefault && (
                         <button
-                          onClick={() => setDefaultMutation.mutate(currentWf._id)}
-                          className="btn-secondary btn-sm text-xs"
+                          type="button"
+                          className="btn-secondary btn-sm"
+                          onClick={() => defaultMutation.mutate(active)}
+                          disabled={defaultMutation.isPending}
                         >
-                          Make Default
+                          Make default
                         </button>
                       )}
+                      <button
+                        type="button"
+                        className="btn-ghost btn-sm text-red-600 hover:bg-red-50"
+                        onClick={() => setConfirmDelete(true)}
+                        disabled={active.isDefault}
+                        title={active.isDefault ? 'Set another workflow as default first' : 'Delete workflow'}
+                      >
+                        <Trash2 size={13} /> Delete
+                      </button>
                     </div>
-                    <p className="text-sm text-surface-500 mt-1">{currentWf.description}</p>
-                  </div>
-                  {!currentWf.isDefault && (
-                    <button
-                      onClick={() => deleteMutation.mutate(currentWf._id)}
-                      className="btn-ghost btn-sm text-red-600 hover:bg-red-50"
-                      title="Delete workflow"
-                    >
-                      <Trash2 size={16} />
-                    </button>
                   )}
                 </div>
 
-                {/* Statuses */}
-                <div>
-                  <h3 className="text-sm font-semibold text-surface-800 mb-3">Configured Statuses ({currentWf.statuses?.length})</h3>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                    {currentWf.statuses?.map((st) => (
-                      <div key={st.id} className="p-3 border border-surface-200 rounded-xl bg-surface-50/50 space-y-1.5">
-                        <div className="flex items-center gap-2">
-                          <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: st.color }} />
-                          <span className="text-sm font-semibold text-surface-800">{st.name}</span>
-                        </div>
-                        <div className="flex justify-between items-center text-[11px] text-surface-400">
-                          <code>{st.id}</code>
-                          <span className={`px-1.5 py-0.5 rounded capitalize ${CATEGORY_COLORS[st.category] || 'bg-surface-100'}`}>
-                            {st.category?.replace('_', ' ')}
-                          </span>
-                        </div>
+                <h3 className="text-xs font-semibold text-surface-700 mb-2">Statuses</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {(active.statuses || []).map((status) => (
+                    <div key={status.id} className="flex items-center gap-2 px-2.5 py-2 rounded-lg border border-surface-200">
+                      <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: status.color }} />
+                      <div className="min-w-0">
+                        <p className="text-xs font-medium text-surface-800 truncate">{status.name}</p>
+                        <p className="text-2xs text-surface-400 capitalize">{status.category.replace('_', ' ')}</p>
                       </div>
-                    ))}
-                  </div>
+                      <code className="ml-auto text-2xs text-surface-400">{status.id}</code>
+                    </div>
+                  ))}
                 </div>
+              </section>
 
-                {/* Transitions Matrix */}
-                <div>
-                  <h3 className="text-sm font-semibold text-surface-800 mb-3">
-                    Allowed State Transitions ({currentWf.transitions?.length})
-                  </h3>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                    {currentWf.transitions?.map((tr, idx) => {
-                      const fromStatus = currentWf.statuses?.find((s) => s.id === tr.from);
-                      const toStatus = currentWf.statuses?.find((s) => s.id === tr.to);
+              <section className="card p-4">
+                <h3 className="text-xs font-semibold text-surface-700 mb-2">Allowed transitions</h3>
+                {(active.transitions || []).length === 0 ? (
+                  <p className="text-xs text-surface-400">No transitions configured — tasks can move between any statuses.</p>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {active.transitions.map((transition, index) => {
+                      const from = active.statuses?.find((status) => status.id === transition.from);
+                      const to = active.statuses?.find((status) => status.id === transition.to);
                       return (
-                        <div key={idx} className="flex items-center gap-2 p-2.5 border border-surface-200 rounded-lg bg-white text-xs">
-                          <span className="w-2 h-2 rounded-full" style={{ backgroundColor: fromStatus?.color || '#94a3b8' }} />
-                          <span className="font-medium text-surface-800">{fromStatus?.name || tr.from}</span>
-                          <ArrowRight size={13} className="text-surface-400 mx-auto" />
-                          <span className="w-2 h-2 rounded-full" style={{ backgroundColor: toStatus?.color || '#94a3b8' }} />
-                          <span className="font-medium text-surface-800">{toStatus?.name || tr.to}</span>
+                        <div key={`${transition.from}-${transition.to}-${index}`} className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-surface-50 border border-surface-200 text-xs">
+                          <span className="w-2 h-2 rounded-full" style={{ backgroundColor: from?.color || '#94a3b8' }} />
+                          <span className="text-surface-700 truncate">{from?.name || transition.from}</span>
+                          <ArrowRight size={11} className="text-surface-400 flex-shrink-0" />
+                          <span className="w-2 h-2 rounded-full" style={{ backgroundColor: to?.color || '#94a3b8' }} />
+                          <span className="text-surface-700 truncate">{to?.name || transition.to}</span>
                         </div>
                       );
                     })}
                   </div>
-                </div>
-              </div>
-            ) : (
-              <div className="card p-12 text-center text-surface-400 text-sm">Select a workflow to view details</div>
-            )}
-          </div>
+                )}
+              </section>
+            </div>
+          )}
         </div>
       )}
 
-      {/* Create Dialog */}
-      <Dialog
-        isOpen={createDialogOpen}
-        onClose={() => setCreateDialogOpen(false)}
-        title="Create Custom Workflow"
-        footer={
-          <>
-            <button className="btn-secondary btn-sm" onClick={() => setCreateDialogOpen(false)}>Cancel</button>
-            <button
-              className="btn-primary btn-sm"
-              disabled={!newWfName.trim()}
-              onClick={handleCreateDefault}
-            >
-              Create
-            </button>
-          </>
-        }
-      >
-        <div className="space-y-4">
-          <div>
-            <label className="label">Workflow Name</label>
-            <input
-              type="text"
-              value={newWfName}
-              onChange={(e) => setNewWfName(e.target.value)}
-              placeholder="e.g. Design Lifecycle"
-              className="input"
-            />
-          </div>
-          <div>
-            <label className="label">Description</label>
-            <textarea
-              value={newWfDesc}
-              onChange={(e) => setNewWfDesc(e.target.value)}
-              placeholder="Purpose of this workflow..."
-              className="input h-20 resize-none"
-            />
-          </div>
-          <p className="text-xs text-surface-500">
-            Initial standard states (Backlog → To Do → In Progress → Done) and transitions will be populated automatically and can be customized.
-          </p>
-        </div>
-      </Dialog>
+      <CreateWorkflowDialog isOpen={createOpen} onClose={() => setCreateOpen(false)} />
+      <ConfirmDialog
+        isOpen={confirmDelete}
+        onClose={() => setConfirmDelete(false)}
+        onConfirm={() => deleteMutation.mutate(active)}
+        title="Delete workflow"
+        message={`“${active?.name}” will be removed. Projects using it fall back to the workspace default workflow.`}
+        confirmLabel="Delete workflow"
+        danger
+        isPending={deleteMutation.isPending}
+      />
     </div>
   );
 };
+
+export default WorkflowsPage;

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import {
   getTasks, getTask, createTask, updateTask, moveTask, deleteTask,
-  getTaskActivity, addSubtask, toggleSubtask,
+  getTaskActivity, addSubtask, toggleSubtask, deleteSubtask,
   getComments, addComment, updateComment, deleteComment,
   getDashboard, getCalendarTasks, scheduleTask,
 } from '../controllers/taskController.js';
@@ -32,6 +32,7 @@ router.get('/:taskId/activity', getTaskActivity);
 // Subtasks
 router.post('/:taskId/subtasks', addSubtask);
 router.patch('/:taskId/subtasks/:subtaskId/toggle', toggleSubtask);
+router.delete('/:taskId/subtasks/:subtaskId', deleteSubtask);
 
 // Comments
 router.get('/:taskId/comments', getComments);

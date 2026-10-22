@@ -1,199 +1,245 @@
-import { useState, useMemo } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useParams, useNavigate } from 'react-router-dom';
-import {
-  Network, ArrowLeft, Plus, AlertCircle, RefreshCw,
-  GitCommit, Trash2, CheckCircle2, ShieldAlert
-} from 'lucide-react';
-import {
-  ReactFlow, Background, Controls, MiniMap,
-  useNodesState, useEdgesState, MarkerType
-} from '@xyflow/react';
+import { useMemo, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { ReactFlow, Background, Controls, MiniMap, MarkerType } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-
+import {
+  ArrowLeft, BarChart3, CalendarDays, Flame, GitCommit, Kanban, Link2, Network, Plus, Trash2, X,
+} from 'lucide-react';
 import { useWorkspace } from '../../contexts/WorkspaceContext';
-import { dependencyApi, tasksApi, dependencyKeys, taskKeys } from '../../lib/taskApi';
-import { PageLoader } from '../../components/ui/Spinner';
+import { useToast } from '../../components/ui/Toast';
 import { Dialog } from '../../components/ui/Dialog';
-import { Alert, extractError } from '../../components/ui/Alert';
+import { FormField, Select } from '../../components/ui/Form';
+import { EmptyState, ErrorState, PageSkeleton, StatCard } from '../../components/ui/Primitives';
+import {
+  projectsApi, tasksApi, dependencyApi, taskKeys, projectKeys,
+} from '../../lib/taskApi';
+import { extractError } from '../../components/ui/Alert';
+
+const VIEWS = [
+  { label: 'Board', icon: Kanban, path: 'board' },
+  { label: 'Calendar', icon: CalendarDays, path: 'calendar' },
+  { label: 'Timeline', icon: BarChart3, path: 'gantt' },
+  { label: 'Dependencies', icon: Network, path: 'dependencies' },
+  { label: 'Critical path', icon: Flame, path: 'critical-path' },
+];
 
 export const DependencyGraphPage = () => {
   const { projectId } = useParams();
   const { activeWorkspaceId } = useWorkspace();
   const navigate = useNavigate();
-  const qc = useQueryClient();
+  const queryClient = useQueryClient();
+  const toast = useToast();
 
-  const [addDepOpen, setAddDepOpen] = useState(false);
-  const [selectedPred, setSelectedPred] = useState('');
-  const [selectedSucc, setSelectedSucc] = useState('');
-  const [apiError, setApiError] = useState(null);
+  const [addOpen, setAddOpen] = useState(false);
+  const [predecessorId, setPredecessorId] = useState('');
+  const [successorId, setSuccessorId] = useState('');
 
-  // Load project tasks
-  const { data: tasksData } = useQuery({
-    queryKey: taskKeys.list(activeWorkspaceId, { project: projectId, limit: 150 }),
-    queryFn: () => tasksApi.list(activeWorkspaceId, { project: projectId, limit: 150 }),
-    enabled: !!activeWorkspaceId && !!projectId,
+  const { data: project } = useQuery({
+    queryKey: projectKeys.detail(activeWorkspaceId, projectId),
+    queryFn: () => projectsApi.get(activeWorkspaceId, projectId),
   });
 
-  // Load dependency graph
-  const { data: graphData, isLoading } = useQuery({
-    queryKey: dependencyKeys.graph(activeWorkspaceId, projectId),
+  const { data: taskData } = useQuery({
+    queryKey: taskKeys.list(activeWorkspaceId, { scope: 'dependencies', project: projectId }),
+    queryFn: () => tasksApi.list(activeWorkspaceId, { project: projectId, limit: 200 }),
+    enabled: Boolean(activeWorkspaceId && projectId),
+  });
+
+  const { data: graph, isLoading, isError, refetch } = useQuery({
+    queryKey: projectKeys.graph(activeWorkspaceId, projectId),
     queryFn: () => dependencyApi.graph(activeWorkspaceId, projectId),
-    enabled: !!activeWorkspaceId && !!projectId,
+    enabled: Boolean(activeWorkspaceId && projectId),
   });
 
-  const addDepMutation = useMutation({
-    mutationFn: ({ successorId, predecessorId }) =>
-      tasksApi.addDependency(activeWorkspaceId, successorId, { predecessorId }),
+  const tasks = taskData?.tasks || [];
+  const nodes = graph?.nodes || [];
+  const edges = graph?.edges || [];
+
+  const refresh = () => {
+    queryClient.invalidateQueries({ queryKey: projectKeys.graph(activeWorkspaceId, projectId) });
+    queryClient.invalidateQueries({ queryKey: taskKeys.all(activeWorkspaceId) });
+  };
+
+  const addMutation = useMutation({
+    mutationFn: () => tasksApi.dependencies.add(activeWorkspaceId, successorId, { predecessorId }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: dependencyKeys.graph(activeWorkspaceId, projectId) });
-      setAddDepOpen(false);
-      setSelectedPred('');
-      setSelectedSucc('');
-      setApiError(null);
+      refresh();
+      toast.success('Dependency created');
+      setAddOpen(false);
+      setPredecessorId('');
+      setSuccessorId('');
     },
-    onError: (e) => setApiError(extractError(e)),
+    onError: (error) => toast.error(extractError(error)),
   });
 
-  const tasks = tasksData?.tasks || [];
-  const rawNodes = graphData?.nodes || [];
-  const rawEdges = graphData?.edges || [];
+  const removeMutation = useMutation({
+    mutationFn: ({ successor, dependencyId }) =>
+      tasksApi.dependencies.remove(activeWorkspaceId, successor, dependencyId),
+    onSuccess: () => { refresh(); toast.success('Dependency removed'); },
+    onError: (error) => toast.error(extractError(error)),
+  });
 
-  // Generate react-flow nodes & edges
-  const flowNodes = useMemo(() => {
-    return rawNodes.map((node, idx) => ({
-      id: node.id,
-      position: { x: 50 + (idx % 3) * 260, y: 50 + Math.floor(idx / 3) * 120 },
-      data: {
-        label: (
-          <div className={`p-2.5 rounded-lg border text-left shadow-sm ${
-            node.isBlocked
-              ? 'bg-red-50 border-red-300'
-              : node.status === 'done'
-              ? 'bg-green-50 border-green-300'
-              : 'bg-white border-surface-200'
-          }`}>
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-xs font-bold text-surface-900 truncate max-w-[140px]">{node.title}</span>
-              {node.isBlocked && <span className="text-[9px] bg-red-100 text-red-700 px-1 rounded font-bold">BLOCKED</span>}
-            </div>
-            <p className="text-[10px] text-surface-400 capitalize mt-1">Status: {node.status?.replace('_', ' ')}</p>
-          </div>
-        ),
-      },
-    }));
-  }, [rawNodes]);
+  const taskTitle = (id) => tasks.find((task) => task._id === id)?.title || nodes.find((node) => node.id === id)?.title || 'Task';
 
-  const flowEdges = useMemo(() => {
-    return rawEdges.map((e) => ({
-      id: e.id,
-      source: e.predecessor,
-      target: e.successor,
-      markerEnd: { type: MarkerType.ArrowClosed, color: '#6366f1' },
-      style: { stroke: '#6366f1', strokeWidth: 2 },
-      animated: true,
-    }));
-  }, [rawEdges]);
+  const flowNodes = useMemo(() => nodes.map((node, index) => ({
+    id: node.id,
+    position: { x: 40 + (index % 4) * 240, y: 30 + Math.floor(index / 4) * 110 },
+    data: {
+      label: (
+        <div className={`px-2.5 py-2 rounded-lg border text-left w-[190px] ${
+          node.isBlocked ? 'bg-red-50 border-red-300' : node.status === 'done' ? 'bg-emerald-50 border-emerald-300' : 'bg-white border-surface-200'
+        }`}>
+          <p className="text-[11px] font-semibold text-surface-900 truncate">{node.title}</p>
+          <p className="text-[10px] text-surface-500 capitalize mt-0.5">
+            {node.status?.replace('_', ' ')}{node.isBlocked ? ' · blocked' : ''}
+          </p>
+        </div>
+      ),
+    },
+    style: { border: 'none', background: 'transparent', padding: 0, width: 190 },
+  })), [nodes]);
 
-  if (isLoading) return <PageLoader />;
+  const flowEdges = useMemo(() => edges.map((edge) => ({
+    id: edge.id,
+    source: edge.predecessor,
+    target: edge.successor,
+    markerEnd: { type: MarkerType.ArrowClosed, color: '#6366f1' },
+    style: { stroke: '#6366f1', strokeWidth: 1.5 },
+  })), [edges]);
+
+  const blockedCount = nodes.filter((node) => node.isBlocked).length;
+
+  if (isLoading) return <PageSkeleton />;
+  if (isError) return <ErrorState message="The dependency graph could not be loaded." onRetry={refetch} />;
 
   return (
-    <div className="p-6 max-w-7xl mx-auto space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <button onClick={() => navigate(`/projects/${projectId}`)} className="btn-ghost p-2">
-            <ArrowLeft size={16} />
+    <div className="page">
+      <Link to={`/projects/${projectId}`} className="inline-flex items-center gap-1.5 text-xs text-surface-500 hover:text-surface-800 mb-3">
+        <ArrowLeft size={13} /> {project?.project?.name || 'Project'}
+      </Link>
+
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
+        <div>
+          <h1 className="text-[19px] font-semibold text-surface-900 flex items-center gap-2">
+            <Network size={18} className="text-primary-600" /> Dependencies
+          </h1>
+          <p className="text-[13px] text-surface-500 mt-0.5">Finish-to-start links between tasks, with cycle detection.</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <div className="hidden md:flex items-center gap-0.5 bg-surface-100 rounded-lg p-0.5 mr-1">
+            {VIEWS.map((view) => (
+              <button
+                key={view.path}
+                type="button"
+                onClick={() => navigate(`/projects/${projectId}/${view.path}`)}
+                className={`inline-flex items-center gap-1.5 px-2 py-1.5 rounded-md text-xs font-medium ${
+                  view.path === 'dependencies' ? 'bg-white text-surface-900 shadow-subtle' : 'text-surface-500 hover:text-surface-800'
+                }`}
+              >
+                <view.icon size={12} /> {view.label}
+              </button>
+            ))}
+          </div>
+          <button type="button" className="btn-primary btn-sm" onClick={() => setAddOpen(true)}>
+            <Plus size={13} /> Link tasks
           </button>
-          <div>
-            <h1 className="text-xl font-bold text-surface-900 flex items-center gap-2">
-              <Network className="text-primary-600" size={22} />
-              Task Dependencies (Finish-to-Start)
-            </h1>
-            <p className="text-xs text-surface-500 mt-0.5">
-              Visualize task blockers, predecessor/successor links with real-time cycle detection.
-            </p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-3 gap-3 mb-4 max-w-2xl">
+        <StatCard label="Tasks" value={nodes.length} icon={GitCommit} tone="primary" />
+        <StatCard label="Dependencies" value={edges.length} icon={Link2} />
+        <StatCard label="Blocked" value={blockedCount} tone={blockedCount ? 'danger' : 'default'} />
+      </div>
+
+      {nodes.length === 0 ? (
+        <div className="card">
+          <EmptyState
+            icon={GitCommit}
+            title="No tasks in this project"
+            description="Add tasks first, then link them to model blockers and ordering."
+          />
+        </div>
+      ) : (
+        <div className="card h-[520px] overflow-hidden relative">
+          <ReactFlow nodes={flowNodes} edges={flowEdges} fitView nodesDraggable={false} nodesConnectable={false}>
+            <Background gap={18} size={1} color="#e2e8f0" />
+            <Controls />
+            <MiniMap pannable zoomable />
+          </ReactFlow>
+        </div>
+      )}
+
+      {edges.length > 0 && (
+        <div className="card mt-4">
+          <header className="px-4 h-11 flex items-center justify-between border-b border-surface-100">
+            <h2 className="section-title">Dependency list</h2>
+            <span className="text-2xs text-surface-400">{edges.length} links</span>
+          </header>
+          <div className="divide-y divide-surface-100">
+            {edges.map((edge) => (
+              <div key={edge.id} className="flex items-center gap-2 px-4 py-2">
+                <span className="text-xs text-surface-700 truncate max-w-[38%]">{taskTitle(edge.predecessor)}</span>
+                <span className="text-2xs text-surface-400">blocks</span>
+                <span className="text-xs text-surface-700 truncate flex-1">{taskTitle(edge.successor)}</span>
+                <button
+                  type="button"
+                  onClick={() => removeMutation.mutate({ successor: edge.successor, dependencyId: edge.id })}
+                  className="btn-icon text-surface-400 hover:text-red-600 hover:bg-red-50"
+                  aria-label={`Remove dependency between ${taskTitle(edge.predecessor)} and ${taskTitle(edge.successor)}`}
+                >
+                  <Trash2 size={13} />
+                </button>
+              </div>
+            ))}
           </div>
         </div>
+      )}
 
-        <button
-          onClick={() => setAddDepOpen(true)}
-          className="btn-primary btn-sm flex items-center gap-1.5"
-        >
-          <Plus size={14} /> Link Tasks
-        </button>
-      </div>
-
-      <Alert type="error" message={apiError} dismissible onDismiss={() => setApiError(null)} />
-
-      {/* React Flow Graph Area */}
-      <div className="card h-[600px] relative overflow-hidden bg-surface-50/50">
-        {rawNodes.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-surface-400">
-            <GitCommit size={40} className="mb-2 text-surface-300" />
-            <p className="text-sm">No tasks found in this project.</p>
-          </div>
-        ) : (
-          <ReactFlow nodes={flowNodes} edges={flowEdges} fitView>
-            <Background gap={16} size={1} color="#cbd5e1" />
-            <Controls />
-            <MiniMap />
-          </ReactFlow>
-        )}
-      </div>
-
-      {/* Link Tasks Dialog */}
       <Dialog
-        isOpen={addDepOpen}
-        onClose={() => setAddDepOpen(false)}
-        title="Add Task Dependency"
+        isOpen={addOpen}
+        onClose={() => setAddOpen(false)}
+        title="Link two tasks"
+        description="The predecessor must finish before the successor can be completed."
+        size="md"
         footer={
           <>
-            <button className="btn-secondary btn-sm" onClick={() => setAddDepOpen(false)}>Cancel</button>
+            <button type="button" className="btn-secondary" onClick={() => setAddOpen(false)}>Cancel</button>
             <button
-              className="btn-primary btn-sm"
-              disabled={!selectedPred || !selectedSucc || selectedPred === selectedSucc}
-              onClick={() => addDepMutation.mutate({ successorId: selectedSucc, predecessorId: selectedPred })}
+              type="button"
+              className="btn-primary"
+              disabled={!predecessorId || !successorId || predecessorId === successorId || addMutation.isPending}
+              onClick={() => addMutation.mutate()}
             >
-              Link Tasks
+              Create link
             </button>
           </>
         }
       >
-        <div className="space-y-4">
-          <div>
-            <label className="label">Predecessor (Must finish first)</label>
-            <select
-              value={selectedPred}
-              onChange={(e) => setSelectedPred(e.target.value)}
-              className="input text-xs"
-            >
-              <option value="">Select predecessor task...</option>
-              {tasks.map((t) => (
-                <option key={t._id} value={t._id}>{t.title}</option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="label">Successor (Blocked until predecessor finishes)</label>
-            <select
-              value={selectedSucc}
-              onChange={(e) => setSelectedSucc(e.target.value)}
-              className="input text-xs"
-            >
-              <option value="">Select successor task...</option>
-              {tasks.map((t) => (
-                <option key={t._id} value={t._id}>{t.title}</option>
-              ))}
-            </select>
-          </div>
-
-          <p className="text-[11px] text-surface-400">
-            Backend topological sort rejects circular links automatically (e.g. A → B → A).
+        <div className="space-y-3">
+          <FormField label="Predecessor (finishes first)" required id="dep-pred">
+            <Select id="dep-pred" value={predecessorId} onChange={(event) => setPredecessorId(event.target.value)}>
+              <option value="">Select a task…</option>
+              {tasks.map((task) => <option key={task._id} value={task._id}>{task.title}</option>)}
+            </Select>
+          </FormField>
+          <FormField label="Successor (blocked until then)" required id="dep-succ">
+            <Select id="dep-succ" value={successorId} onChange={(event) => setSuccessorId(event.target.value)}>
+              <option value="">Select a task…</option>
+              {tasks.map((task) => <option key={task._id} value={task._id}>{task.title}</option>)}
+            </Select>
+          </FormField>
+          {predecessorId && predecessorId === successorId && (
+            <p className="text-xs text-red-600 flex items-center gap-1"><X size={12} /> A task cannot depend on itself.</p>
+          )}
+          <p className="text-2xs text-surface-400">
+            Circular dependencies (A → B → A) are rejected by the server.
           </p>
         </div>
       </Dialog>
     </div>
   );
 };
+
+export default DependencyGraphPage;

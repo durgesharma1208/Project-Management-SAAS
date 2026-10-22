@@ -1,7 +1,9 @@
+import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { WorkspaceProvider } from './contexts/WorkspaceContext';
+import { ToastProvider } from './components/ui/Toast';
 import { FullPageLoader } from './components/ui/Spinner';
 import { AppLayout } from './components/layout/AppLayout';
 
@@ -16,16 +18,18 @@ import { AcceptInvitePage } from './pages/auth/AcceptInvitePage';
 import { DashboardPage } from './pages/dashboard/DashboardPage';
 import { ProjectsPage } from './pages/projects/ProjectsPage';
 import { ProjectDetailPage } from './pages/projects/ProjectDetailPage';
-import { KanbanBoardPage } from './pages/projects/KanbanBoardPage';
+const KanbanBoardPage = lazy(() => import('./pages/projects/KanbanBoardPage').then((m) => ({ default: m.KanbanBoardPage })));
+// The interactive visualisations pull in heavier libraries (@xyflow/react,
+// date maths), so they are loaded on demand instead of on first paint.
+const CalendarViewPage = lazy(() => import('./pages/projects/CalendarViewPage').then((m) => ({ default: m.CalendarViewPage })));
+const GanttViewPage = lazy(() => import('./pages/projects/GanttViewPage').then((m) => ({ default: m.GanttViewPage })));
+const DependencyGraphPage = lazy(() => import('./pages/projects/DependencyGraphPage').then((m) => ({ default: m.DependencyGraphPage })));
+const CriticalPathPage = lazy(() => import('./pages/projects/CriticalPathPage').then((m) => ({ default: m.CriticalPathPage })));
 import { MyTasksPage } from './pages/tasks/MyTasksPage';
 import { ListViewPage } from './pages/tasks/ListViewPage';
 import { TeamsPage } from './pages/teams/TeamsPage';
 import { SettingsPage } from './pages/settings/SettingsPage';
 import { WorkflowsPage } from './pages/settings/WorkflowsPage';
-import { CalendarViewPage } from './pages/projects/CalendarViewPage';
-import { GanttViewPage } from './pages/projects/GanttViewPage';
-import { DependencyGraphPage } from './pages/projects/DependencyGraphPage';
-import { CriticalPathPage } from './pages/projects/CriticalPathPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -37,7 +41,11 @@ const queryClient = new QueryClient({
   },
 });
 
-// Protected route wrapper
+/** Only allow same-app relative redirects after sign-in. */
+const safeRedirect = (value, fallback = '/dashboard') => (
+  value && value.startsWith('/') && !value.startsWith('//') ? value : fallback
+);
+
 const ProtectedRoute = () => {
   const { isAuthenticated, loading } = useAuth();
   if (loading) return <FullPageLoader />;
@@ -45,7 +53,6 @@ const ProtectedRoute = () => {
   return <Outlet />;
 };
 
-// Public-only route (redirect authenticated users away)
 const PublicRoute = () => {
   const { isAuthenticated, loading } = useAuth();
   if (loading) return <FullPageLoader />;
@@ -53,16 +60,8 @@ const PublicRoute = () => {
   return <Outlet />;
 };
 
-// Kanban full-page layout (no sidebar/topnav chrome)
-const KanbanLayout = () => (
-  <div className="flex h-screen overflow-hidden bg-surface-50">
-    <KanbanBoardPage />
-  </div>
-);
-
 const AppRoutes = () => (
   <Routes>
-    {/* Public routes */}
     <Route element={<PublicRoute />}>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
@@ -70,35 +69,31 @@ const AppRoutes = () => (
       <Route path="/reset-password/:token" element={<ResetPasswordPage />} />
     </Route>
 
-    {/* Invitation page — accessible while authenticated */}
+    {/* Invitation page — reachable signed in or signed out */}
     <Route path="/invite/:token" element={<AcceptInvitePage />} />
 
-    {/* Protected app routes */}
     <Route element={<ProtectedRoute />}>
-      {/* Standard app shell routes */}
       <Route element={<AppLayout />}>
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/my-tasks" element={<MyTasksPage />} />
+        <Route path="/tasks" element={<ListViewPage />} />
         <Route path="/tasks/list" element={<ListViewPage />} />
-        <Route path="/workflows" element={<WorkflowsPage />} />
         <Route path="/projects" element={<ProjectsPage />} />
         <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
+        <Route path="/projects/:projectId/board" element={<KanbanBoardPage />} />
         <Route path="/projects/:projectId/calendar" element={<CalendarViewPage />} />
         <Route path="/projects/:projectId/gantt" element={<GanttViewPage />} />
         <Route path="/projects/:projectId/dependencies" element={<DependencyGraphPage />} />
         <Route path="/projects/:projectId/critical-path" element={<CriticalPathPage />} />
+        <Route path="/workflows" element={<WorkflowsPage />} />
         <Route path="/teams" element={<TeamsPage />} />
-        <Route path="/settings" element={<SettingsPage />} />
-        <Route path="/profile" element={<SettingsPage />} />
+        <Route path="/settings" element={<SettingsPage defaultTab="workspace" />} />
+        <Route path="/profile" element={<SettingsPage defaultTab="profile" />} />
       </Route>
-
-      {/* Kanban has its own full-height layout without sidebar */}
-      <Route path="/projects/:projectId/board" element={<KanbanLayout />} />
     </Route>
 
-    {/* Default redirect */}
     <Route path="/" element={<Navigate to="/dashboard" replace />} />
-    <Route path="*" element={<Navigate to="/dashboard" replace />} />
+    <Route path="*" element={<Navigate to={safeRedirect('/dashboard')} replace />} />
   </Routes>
 );
 
@@ -106,11 +101,15 @@ export default function App() {
   return (
     <BrowserRouter>
       <QueryClientProvider client={queryClient}>
-        <AuthProvider>
-          <WorkspaceProvider>
-            <AppRoutes />
-          </WorkspaceProvider>
-        </AuthProvider>
+        <ToastProvider>
+          <AuthProvider>
+            <WorkspaceProvider>
+              <Suspense fallback={<FullPageLoader />}>
+                <AppRoutes />
+              </Suspense>
+            </WorkspaceProvider>
+          </AuthProvider>
+        </ToastProvider>
       </QueryClientProvider>
     </BrowserRouter>
   );

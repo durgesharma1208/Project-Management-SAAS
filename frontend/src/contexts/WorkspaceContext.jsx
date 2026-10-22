@@ -1,54 +1,56 @@
-import { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import api from '../lib/api';
+import { workspacesApi, workspaceKeys } from '../lib/taskApi';
 import { useAuth } from './AuthContext';
 
 const WorkspaceContext = createContext(null);
+const STORAGE_KEY = 'activeWorkspaceId';
 
 export const WorkspaceProvider = ({ children }) => {
   const { isAuthenticated } = useAuth();
-  const [activeWorkspaceId, setActiveWorkspaceId] = useState(
-    () => localStorage.getItem('activeWorkspaceId') || null
-  );
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState(() => localStorage.getItem(STORAGE_KEY) || null);
 
   const { data, isLoading, refetch } = useQuery({
-    queryKey: ['workspaces'],
-    queryFn: () => api.get('/workspaces').then((r) => r.data.data.workspaces),
+    queryKey: workspaceKeys.all,
+    queryFn: workspacesApi.list,
     enabled: isAuthenticated,
+    staleTime: 60_000,
   });
 
-  const workspaces = data || [];
+  const workspaces = useMemo(() => data || [], [data]);
 
-  // Auto-select first workspace if none selected or saved one is gone
+  // Keep the selected workspace valid; default to the first one available.
   useEffect(() => {
-    if (workspaces.length === 0) return;
+    if (!workspaces.length) return;
     const valid = workspaces.find((w) => w._id === activeWorkspaceId);
     if (!valid) {
       const first = workspaces[0];
       setActiveWorkspaceId(first._id);
-      localStorage.setItem('activeWorkspaceId', first._id);
+      localStorage.setItem(STORAGE_KEY, first._id);
     }
   }, [workspaces, activeWorkspaceId]);
 
   const switchWorkspace = useCallback((id) => {
     setActiveWorkspaceId(id);
-    localStorage.setItem('activeWorkspaceId', id);
+    localStorage.setItem(STORAGE_KEY, id);
   }, []);
 
   const activeWorkspace = workspaces.find((w) => w._id === activeWorkspaceId) || null;
+  const role = activeWorkspace?.role || 'member';
 
-  return (
-    <WorkspaceContext.Provider value={{
-      workspaces,
-      activeWorkspace,
-      activeWorkspaceId,
-      switchWorkspace,
-      isLoading,
-      refetch,
-    }}>
-      {children}
-    </WorkspaceContext.Provider>
-  );
+  const value = useMemo(() => ({
+    workspaces,
+    activeWorkspace,
+    activeWorkspaceId,
+    activeRole: role,
+    canManageWorkspace: role === 'owner' || role === 'admin',
+    isOwner: role === 'owner',
+    switchWorkspace,
+    isLoading,
+    refetch,
+  }), [workspaces, activeWorkspace, activeWorkspaceId, role, switchWorkspace, isLoading, refetch]);
+
+  return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;
 };
 
 export const useWorkspace = () => {

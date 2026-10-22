@@ -33,13 +33,14 @@ const clearRefreshCookie = (res) => {
 
 // ── Register ───────────────────────────────────────────────────────────────────
 export const register = async ({ name, email, password }) => {
-  const existing = await User.findOne({ email });
+  const normalizedEmail = email.trim().toLowerCase();
+  const existing = await User.findOne({ email: normalizedEmail });
   if (existing) throw createError('Email already in use', 409);
 
-  const user = await User.create({ name, email, password });
+  const user = await User.create({ name, email: normalizedEmail, password });
 
   // Create default personal workspace
-  const slug = email.split('@')[0].toLowerCase().replace(/[^a-z0-9]/g, '-') + '-' + Date.now().toString(36);
+  const slug = normalizedEmail.split('@')[0].toLowerCase().replace(/[^a-z0-9]/g, '-') + '-' + Date.now().toString(36);
   const workspace = await Workspace.create({ name: `${name}'s Workspace`, slug, owner: user._id });
   await Membership.create({ workspace: workspace._id, user: user._id, role: 'owner' });
 
@@ -54,7 +55,7 @@ export const register = async ({ name, email, password }) => {
 
 // ── Login ──────────────────────────────────────────────────────────────────────
 export const login = async ({ email, password }) => {
-  const user = await User.findOne({ email }).select('+password +refreshTokens');
+  const user = await User.findOne({ email: email.trim().toLowerCase() }).select('+password +refreshTokens');
   if (!user || !user.isActive) throw createError('Invalid credentials', 401);
 
   const valid = await user.comparePassword(password);
@@ -122,7 +123,7 @@ export const logout = async (userId, incomingToken) => {
 
 // ── Forgot password ────────────────────────────────────────────────────────────
 export const forgotPassword = async (email) => {
-  const user = await User.findOne({ email });
+  const user = await User.findOne({ email: email.trim().toLowerCase() });
   if (!user) return; // silently do nothing to avoid enumeration
 
   const rawToken = crypto.randomBytes(32).toString('hex');

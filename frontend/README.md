@@ -1,19 +1,54 @@
-# React + Vite
+# TaskFlow — frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React 19 + Vite + Tailwind single-page app for the TaskFlow API.
 
-Currently, two official plugins are available:
+```bash
+npm install
+npm run dev     # http://localhost:5173 (proxies /api → http://localhost:5000)
+npm run build   # production bundle in dist/
+npm run lint    # eslint (react-hooks rules enabled)
+```
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+See the [root README](../README.md) for full setup instructions, the API surface
+and the design/architecture notes.
 
-## React Compiler
+## Structure
 
-The React Compiler is enabled on this template. See [this documentation](https://react.dev/learn/react-compiler) for more information.
+```
+src/
+  components/
+    ui/        design-system primitives (Dialog, Menu, Toast, Tabs, Form,
+               Badge, Primitives, ConfirmDialog, Alert, Avatar, Spinner)
+    layout/    AppLayout, Sidebar, TopNav, CommandPalette
+    tasks/     TaskFormDialog, TaskPanel, TaskListItem
+    projects/  ProjectFormDialog
+  contexts/    AuthContext (session), WorkspaceContext (active workspace + role)
+  hooks/       useMembers (cached workspace member list)
+  lib/         api (axios + refresh queue), taskApi (resources + query keys),
+               constants (status/priority metadata), format (date helpers)
+  pages/       auth, dashboard, projects (+board/calendar/gantt/dependencies/
+               critical-path), tasks, teams, settings
+```
 
-Note: This will impact Vite dev & build performances.
-You can also try [the experimental native React Compiler support in plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react/README.md#rust-react-compiler) by using `compiler: true` in the plugin options instead of using the Babel plugin.
+## Design system
 
-## Expanding the ESLint configuration
+Tokens live in `tailwind.config.js` (colours, radii, shadows, animations) and the
+component classes in `src/index.css`:
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+- Layout: `.page`, `.card`, `.section-title`, `.table-head`, `.divider`
+- Actions: `.btn-primary`, `.btn-secondary`, `.btn-ghost`, `.btn-subtle`,
+  `.btn-danger`, `.btn-icon`, `.btn-sm`, `.btn-lg`
+- Forms: `.input`, `.input-sm`, `.label`, `.hint`, `.input-error`
+- Fragments: `.badge`, `.chip`, `.kbd`, `.status-dot`, `.nav-item`, `.dropdown`,
+  `.dialog-panel`, `.skeleton`
+
+Pages compose these classes plus the components in `components/ui`; they do not
+define their own buttons or inputs.
+
+## Notes
+
+- `/api` is always called relative — no hard-coded backend host in the browser.
+- TanStack Query owns all server state; every mutation invalidates the keys it
+  touches (see `lib/taskApi.js`).
+- The board/calendar/gantt/dependency views are lazy-loaded to keep the first
+  paint small.
