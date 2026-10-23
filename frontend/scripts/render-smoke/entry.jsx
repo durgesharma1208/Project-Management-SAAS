@@ -112,6 +112,133 @@ const renderCase = async (name, path, element) => {
   }
 };
 
+
+// ── Interaction checks ────────────────────────────────────────────────────────
+// Render a page, drive the DOM and assert on what the user would actually see.
+const mountPage = async (path, element) => {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const errors = [];
+  const original = console.error;
+  console.error = (...args) => { errors.push(args.map(String).join(' ')); };
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  const root = createRoot(container);
+  root.render(
+    <QueryClientProvider client={queryClient}>
+      <ToastProvider>
+        <AuthProvider>
+          <WorkspaceProvider>
+            <MemoryRouter initialEntries={[path]}>
+              <Routes>
+                <Route path="/tasks/list" element={element} />
+                <Route path="/projects" element={element} />
+                <Route path="/dashboard" element={element} />
+                <Route path="/login" element={element} />
+                <Route path="/projects/:projectId/board" element={element} />
+                <Route path="*" element={element} />
+              </Routes>
+            </MemoryRouter>
+          </WorkspaceProvider>
+        </AuthProvider>
+      </ToastProvider>
+    </QueryClientProvider>,
+  );
+  await flush(140);
+  return {
+    container,
+    text: () => document.body.textContent || '',
+    findButton: (label) => Array.from(document.querySelectorAll('button')).find((b) => (b.textContent || '').trim().includes(label)),
+    click: async (el) => {
+      if (!el) return false;
+      el.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+      await flush(140);
+      return true;
+    },
+    unmount: () => { console.error = original; root.unmount(); container.remove(); },
+    errors,
+  };
+};
+
+const runInteractions = async () => {
+  const checks = [];
+
+  // Task drawer opens from a row, closes again, and the create dialog opens.
+  {
+    const view = await mountPage('/tasks/list', <ListViewPage />);
+    const row = Array.from(document.querySelectorAll('button')).find((el) => (el.textContent || '').includes('Design the navigation shell'));
+    await view.click(row);
+    checks.push(['list: open task panel', view.text().includes('Subtasks') && view.text().includes('Comments')]);
+    await view.click(document.querySelector('[aria-label="Close task panel"]'));
+    checks.push(['list: close task panel', !document.querySelector('[aria-label^="Task:"]')]);
+    await view.click(view.findButton('New task'));
+    checks.push(['list: create-task dialog', Boolean(document.querySelector('#task-title, input[id*="title"]'))]);
+    view.unmount();
+  }
+
+  {
+    const view = await mountPage('/projects', <ProjectsPage />);
+    await view.click(view.findButton('New project'));
+    checks.push(['projects: create-project dialog', Boolean(document.querySelector('#project-name, input[id*="project-name"]'))]);
+    view.unmount();
+  }
+
+  {
+    const view = await mountPage('/projects/p1/board', <KanbanBoardPage />);
+    const addButtons = Array.from(document.querySelectorAll('button')).filter((b) => (b.textContent || '').includes('Add task'));
+    await view.click(addButtons[0]);
+    checks.push(['board: inline task composer', Boolean(document.querySelector('textarea[aria-label="New task title"]'))]);
+    view.unmount();
+  }
+
+  // Auth shell: aurora layers are present and the form sits in a glass card.
+  {
+    const view = await mountPage('/login', <LoginPage />);
+    const aurora = document.querySelector('.aurora');
+    const blobs = document.querySelectorAll('.aurora__blob');
+    const glass = document.querySelector('.glass-card');
+    const grid = document.querySelector('.aurora__grid');
+    const grain = document.querySelector('.aurora__grain');
+    const labelled = Boolean(document.querySelector('label[for="email"]'));
+    checks.push(['auth: aurora background layers', Boolean(aurora) && blobs.length >= 3 && Boolean(grid) && Boolean(grain)]);
+    checks.push(['auth: glass card + labelled form', Boolean(glass) && labelled]);
+    view.unmount();
+  }
+
+  // Command palette opens with Ctrl+K inside the app shell.
+  {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    root.render(
+      <QueryClientProvider client={queryClient}>
+        <ToastProvider>
+          <AuthProvider>
+            <WorkspaceProvider>
+              <MemoryRouter initialEntries={['/dashboard']}>
+                <Routes>
+                  <Route element={<AppLayout />}>
+                    <Route path="/dashboard" element={<DashboardPage />} />
+                    <Route path="*" element={<DashboardPage />} />
+                  </Route>
+                </Routes>
+              </MemoryRouter>
+            </WorkspaceProvider>
+          </AuthProvider>
+        </ToastProvider>
+      </QueryClientProvider>,
+    );
+    await flush(160);
+    document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }));
+    await flush(140);
+    checks.push(['shell: command palette (Ctrl+K)', Boolean(document.querySelector('[aria-label="Search TaskFlow"]'))]);
+    root.unmount();
+    container.remove();
+  }
+
+  return checks;
+};
+
 const main = async () => {
   localStorage.setItem('accessToken', 'test-token');
   localStorage.setItem('activeWorkspaceId', 'w1');
@@ -162,7 +289,12 @@ const main = async () => {
   shellErrors.slice(0, 5).forEach((e) => console.log('        ! ' + e.split('\n')[0].slice(0, 220)));
 
   console.log(`\n${results.length - failed.length}/${results.length} page renders without console errors`);
-  process.exitCode = failed.length || shellErrors.length ? 1 : 0;
+
+  const checks = await runInteractions();
+  checks.forEach(([name, ok]) => console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}`));
+  const failedChecks = checks.filter(([, ok]) => !ok).length;
+  console.log(`${checks.length - failedChecks}/${checks.length} interaction checks passed`);
+  process.exitCode = failed.length || shellErrors.length || failedChecks ? 1 : 0;
   setTimeout(() => process.exit(process.exitCode), 50);
 };
 

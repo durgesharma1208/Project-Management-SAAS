@@ -217,7 +217,14 @@ cd backend && npm test        # CPM scheduler + task-query builder (10 tests)
 cd backend && npm run check   # syntax check the server entry point
 cd frontend && npm run lint
 cd frontend && npm run build
+cd frontend && npm run test:render
 ```
+
+`npm run test:render` mounts every screen in jsdom against a mocked API
+(`frontend/scripts/render-smoke`): 19 page renders (with data, no console
+errors), the full app shell, and 8 interaction checks — task drawer open/close,
+create-task and create-project dialogs, the board's inline composer, the aurora
+auth shell, and the ⌘K palette.
 
 There is no integration test suite against a live database in this repository;
 the API is exercised end-to-end manually (see the smoke-test commands in the
