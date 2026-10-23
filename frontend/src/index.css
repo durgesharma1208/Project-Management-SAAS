@@ -216,6 +216,115 @@
   .status-done        { @apply bg-emerald-50 text-emerald-700; }
 }
 
+/* ─────────────────────────────────────────────────────────────────────────────
+   Aurora background
+   Soft, brand-coloured mesh used behind the authentication screens (and, very
+   faintly, behind the empty-workspace card). Built from radial gradients rather
+   than blurred boxes: the falloff is part of the gradient so there is no
+   `filter: blur()` cost and it stays smooth on low-powered devices.
+   ───────────────────────────────────────────────────────────────────────────── */
+@layer components {
+  .aurora {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+    background-color: #f6f7fb;
+    background-image:
+      radial-gradient(120% 90% at 50% -20%, #eef2ff 0%, rgba(238, 242, 255, 0) 60%),
+      linear-gradient(180deg, #f8fafc 0%, #f3f4fb 55%, #f8fafc 100%);
+  }
+
+  /* One drifting colour cloud. Size/position/colour come from the component. */
+  .aurora__blob {
+    position: absolute;
+    border-radius: 9999px;
+    opacity: 0.75;
+    background: radial-gradient(
+      circle at 50% 50%,
+      var(--aurora-color, rgb(99 102 241 / 0.5)) 0%,
+      rgb(255 255 255 / 0) 68%
+    );
+    will-change: transform;
+    transform: translate3d(0, 0, 0);
+  }
+
+  .aurora__blob--a { animation: auroraA 26s ease-in-out infinite alternate; }
+  .aurora__blob--b { animation: auroraB 32s ease-in-out infinite alternate; }
+  .aurora__blob--c { animation: auroraC 38s ease-in-out infinite alternate; }
+
+  /* Faint perspective grid, faded out towards the bottom so it reads as depth
+     rather than a texture. */
+  .aurora__grid {
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(to right, rgb(79 70 229 / 0.06) 1px, transparent 1px),
+      linear-gradient(to bottom, rgb(79 70 229 / 0.06) 1px, transparent 1px);
+    background-size: 56px 56px;
+    -webkit-mask-image: radial-gradient(90% 60% at 50% 0%, #000 0%, transparent 78%);
+    mask-image: radial-gradient(90% 60% at 50% 0%, #000 0%, transparent 78%);
+  }
+
+  /* Film grain: hides the banding that large soft gradients produce on 8-bit
+     displays and adds the "printed" texture. Inlined SVG, no asset request. */
+  .aurora__grain {
+    position: absolute;
+    inset: 0;
+    opacity: 0.32;
+    mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  /* Glass surface used for cards floating over the aurora. */
+  .glass-card {
+    @apply rounded-2xl border border-white/70 shadow-glass backdrop-blur-xl;
+    background-color: rgb(255 255 255 / 0.72);
+  }
+
+  /* Very low-contrast veil for in-app cards that want a hint of colour. */
+  .aurora-veil {
+    position: relative;
+    overflow: hidden;
+    isolation: isolate;
+  }
+  .aurora-veil::before {
+    content: '';
+    position: absolute;
+    inset: -40% -10% auto -10%;
+    height: 130%;
+    z-index: -1;
+    background:
+      radial-gradient(38% 60% at 18% 8%, rgb(99 102 241 / 0.16) 0%, transparent 70%),
+      radial-gradient(34% 55% at 82% 0%, rgb(139 92 246 / 0.14) 0%, transparent 72%),
+      radial-gradient(30% 50% at 55% 92%, rgb(6 182 212 / 0.1) 0%, transparent 70%);
+  }
+}
+
+/* Respect the OS "reduce motion" setting: the mesh stays, the drift stops. */
+@media (prefers-reduced-motion: reduce) {
+  .aurora__blob {
+    animation: none !important;
+  }
+}
+
+/* Three independent drift paths so the mesh never visibly loops. */
+@keyframes auroraA {
+  0%   { transform: translate3d(0, 0, 0) scale(1); }
+  50%  { transform: translate3d(4%, 6%, 0) scale(1.08); }
+  100% { transform: translate3d(-3%, -4%, 0) scale(0.96); }
+}
+@keyframes auroraB {
+  0%   { transform: translate3d(0, 0, 0) scale(1.04); }
+  50%  { transform: translate3d(-6%, 4%, 0) scale(0.94); }
+  100% { transform: translate3d(3%, -6%, 0) scale(1.1); }
+}
+@keyframes auroraC {
+  0%   { transform: translate3d(0, 0, 0) scale(0.98); }
+  50%  { transform: translate3d(5%, -5%, 0) scale(1.06); }
+  100% { transform: translate3d(-5%, 3%, 0) scale(1); }
+}
+
 @layer utilities {
   .truncate-2 {
     display: -webkit-box;

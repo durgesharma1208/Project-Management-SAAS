@@ -47,6 +47,10 @@ export default {
         elevated: '0 8px 24px -6px rgb(16 24 40 / 0.12), 0 2px 6px -2px rgb(16 24 40 / 0.06)',
         dialog: '0 24px 48px -12px rgb(16 24 40 / 0.24), 0 8px 16px -8px rgb(16 24 40 / 0.12)',
         panel: '-8px 0 32px -8px rgb(16 24 40 / 0.16)',
+        // Floating glass panel over the aurora: a wide soft drop, a tight
+        // contact shadow and an inner top highlight that reads as light on glass.
+        glass:
+          '0 32px 64px -24px rgb(30 27 75 / 0.28), 0 12px 28px -16px rgb(30 27 75 / 0.18), inset 0 1px 0 0 rgb(255 255 255 / 0.65)',
       },
       borderRadius: {
         lg: '0.5625rem',

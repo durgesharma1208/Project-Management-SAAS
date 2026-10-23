@@ -45,6 +45,24 @@ component classes in `src/index.css`:
 Pages compose these classes plus the components in `components/ui`; they do not
 define their own buttons or inputs.
 
+## Background & motion
+
+The authentication screens sit on an **aurora mesh** (`components/layout/AuroraBackground.jsx`):
+three or four oversized radial-gradient clouds drifting on independent 26–38s
+loops, over a faint masked grid and an inline SVG grain overlay.
+
+- Pure CSS — no canvas, no animation library, no timers, nothing to clean up.
+- The falloff lives inside the gradient, so there is no `filter: blur()` cost.
+- `prefers-reduced-motion: reduce` keeps the composition but stops the drift.
+- Cards on top use `.glass-card` (translucent white + backdrop blur + inner
+  highlight), so they float rather than sit on the colour.
+- Only the auth screens, the invitation page and the empty-workspace card use it;
+  working surfaces (board, list, dashboard) stay on flat `surface-50` so text
+  keeps full contrast and the app stays quiet.
+
+All five auth screens share `components/layout/AuthShell.jsx`, so the brand mark,
+card width and spacing can only change in one place.
+
 ## Notes
 
 - `/api` is always called relative — no hard-coded backend host in the browser.

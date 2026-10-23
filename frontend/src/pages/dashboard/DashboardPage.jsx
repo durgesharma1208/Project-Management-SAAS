@@ -108,7 +108,7 @@ export const DashboardPage = () => {
       />
 
       {isEmptyWorkspace ? (
-        <div className="card p-8 sm:p-12 text-center">
+        <div className="card aurora-veil p-8 sm:p-12 text-center">
           <div className="w-14 h-14 rounded-2xl bg-primary-50 flex items-center justify-center mx-auto mb-4">
             <Sparkles size={26} className="text-primary-600" />
           </div>

@@ -3,11 +3,12 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Link } from 'react-router-dom';
 import { useState } from 'react';
-import { Zap, ArrowLeft } from 'lucide-react';
+import { ArrowLeft, MailCheck } from 'lucide-react';
 import api from '../../lib/api';
 import { FormField, Input } from '../../components/ui/Form';
 import { Alert, extractError } from '../../components/ui/Alert';
 import { Spinner } from '../../components/ui/Spinner';
+import { AuthShell } from '../../components/layout/AuthShell';
 
 const schema = z.object({ email: z.string().email('Invalid email') });
 
@@ -31,47 +32,45 @@ export const ForgotPasswordPage = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-surface-50 via-primary-50/30 to-surface-100 flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
-        <div className="flex items-center gap-2.5 justify-center mb-8">
-          <div className="w-9 h-9 bg-primary-600 rounded-xl flex items-center justify-center shadow-elevated">
-            <Zap size={18} className="text-white" />
+    <AuthShell
+      footer={
+        <Link to="/login" className="inline-flex items-center gap-1.5 text-surface-500 transition-colors hover:text-surface-900">
+          <ArrowLeft size={13} /> Back to login
+        </Link>
+      }
+    >
+      {sent ? (
+        <div className="text-center">
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-emerald-50 ring-1 ring-emerald-100">
+            <MailCheck size={22} className="text-emerald-600" aria-hidden="true" />
           </div>
-          <span className="text-xl font-bold text-surface-900">TaskFlow</span>
+          <h1 className="text-[22px] font-semibold tracking-[-0.02em] text-surface-900">Check your email</h1>
+          <p className="mt-2 text-sm text-surface-500">
+            If that email exists, we&apos;ve sent a reset link. Check the server console if email is not configured.
+          </p>
+          <Link to="/login" className="btn-primary mt-5 inline-flex">Back to login</Link>
         </div>
+      ) : (
+        <>
+          <div className="mb-6">
+            <h1 className="text-[22px] font-semibold tracking-[-0.02em] text-surface-900">Reset password</h1>
+            <p className="mt-1 text-sm text-surface-500">Enter your email and we&apos;ll send a reset link</p>
+          </div>
 
-        <div className="card p-8">
-          {sent ? (
-            <div className="text-center">
-              <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <span className="text-2xl">📧</span>
-              </div>
-              <h2 className="text-lg font-semibold text-surface-900 mb-2">Check your email</h2>
-              <p className="text-sm text-surface-500">If that email exists, we've sent a reset link. Check the server console if email is not configured.</p>
-              <Link to="/login" className="btn-primary mt-5 inline-flex">Back to login</Link>
-            </div>
-          ) : (
-            <>
-              <div className="mb-6">
-                <h1 className="text-2xl font-bold text-surface-900">Reset password</h1>
-                <p className="text-surface-500 mt-1 text-sm">Enter your email and we'll send a reset link</p>
-              </div>
-              <Alert type="error" message={apiError} />
-              <form onSubmit={handleSubmit(onSubmit)} className="space-y-4 mt-4">
-                <FormField label="Email address" error={errors.email?.message} required id="email">
-                  <Input id="email" type="email" {...register('email')} placeholder="jane@example.com" autoFocus error={errors.email} />
-                </FormField>
-                <button type="submit" className="btn-primary w-full" disabled={loading}>
-                  {loading ? <Spinner size={15} /> : 'Send reset link'}
-                </button>
-              </form>
-              <Link to="/login" className="flex items-center gap-1.5 text-sm text-surface-500 hover:text-surface-900 mt-4 justify-center">
-                <ArrowLeft size={14} /> Back to login
-              </Link>
-            </>
-          )}
-        </div>
-      </div>
-    </div>
+          <Alert type="error" message={apiError} />
+
+          <form onSubmit={handleSubmit(onSubmit)} className="mt-4 space-y-4">
+            <FormField label="Email address" error={errors.email?.message} required id="email">
+              <Input id="email" type="email" {...register('email')} placeholder="jane@example.com" autoFocus error={errors.email} />
+            </FormField>
+            <button type="submit" className="btn-primary w-full" disabled={loading}>
+              {loading ? <Spinner size={15} /> : 'Send reset link'}
+            </button>
+          </form>
+        </>
+      )}
+    </AuthShell>
   );
 };
+
+export default ForgotPasswordPage;
